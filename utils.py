@@ -8,7 +8,11 @@ from typing import Any, Dict, List, Optional, Union
 from transformers import Wav2Vec2FeatureExtractor
 from dataclasses import dataclass, field
 
-def cal_class_weight(labels, n_classes, alpha=0.2, epsilon=1e-5):
+def load_from_json(data_json):
+    with open(data_json, newline='') as jsonfile:
+        return json.load(jsonfile)
+
+def cal_class_weight(labels, n_classes, alpha=1.0, epsilon=1e-5):
     # input: list
     # output: 1-d tensor
     
@@ -18,7 +22,7 @@ def cal_class_weight(labels, n_classes, alpha=0.2, epsilon=1e-5):
     for c in range(n_classes):
         indices = np.where(labels == (c+1))
         n_samples_each[c] = len(labels[indices])
-    class_weight = np.power(n_samples, alpha) / np.power(n_samples_each, alpha)
+    class_weight = np.power(n_samples, alpha) / n_classes * np.power(n_samples_each, alpha)
     class_weight[np.isinf(class_weight)] = 0
     
     '''
@@ -41,8 +45,7 @@ def speech_file_to_array_fn(path):
 def make_dataset(data_json):
 
     print("Loading data from {} ...".format(data_json))
-    with open(data_json, newline='') as jsonfile:
-        data_dict = json.load(jsonfile)
+    data_dict = load_from_json(data_json)
 
     dataset = Dataset.from_dict(data_dict)
     # batch[audio] include path, array

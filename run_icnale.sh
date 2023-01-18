@@ -2,11 +2,11 @@
 # dependency: torch, torchaudio, transformers, datasets, librosa
 
 # wav2cec2 config
-model_path="facebook/wav2vec2-base"
+model_path="patrickvonplaten/wav2vec2-base"
 # problem type [regression, single_label_classification]
 problem_type="single_label_classification"
 num_labels=1
-[ "$problem_type" == "classification" ] && num_labels=8
+[ "$problem_type" == "single_label_classification" ] && num_labels=5
 
 # data config
 kfold=1
@@ -18,7 +18,8 @@ json_root="data-json/icnale/trans_stt_whisperv2_large"
 # training config
 nj=4
 gpuid=0
-exp_root=exp/icnale/wav2vec2-base/$problem_type
+train_conf=conf/train_icnale.json
+exp_root=exp/icnale/wav2vec2-base/$problem_type/base_slt
 
 # stage
 stage=0
@@ -46,6 +47,7 @@ if [ $stage -le 1 ]; then
         for fd in $folds; do
             CUDA_VISIBLE_DEVICES="$gpuid" \
                 python train.py \
+                    --train-conf $train_conf \
                     --model-path $model_path \
                     --problem-type $problem_type \
                     --num-labels $num_labels \
@@ -55,7 +57,6 @@ if [ $stage -le 1 ]; then
                     --nj $nj || exit 1
         done
     done
-    exit 0
 fi
 
 if [ $stage -le 2 ]; then

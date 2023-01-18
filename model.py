@@ -26,8 +26,8 @@ class PredictionHead(nn.Module):
     def __init__(self, config):
         super(PredictionHead, self).__init__()
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
-        self.linear = nn.Linear(config.hidden_size, config.num_labels)
         self.dropout = nn.Dropout(config.final_dropout)
+        self.linear = nn.Linear(config.hidden_size, config.num_labels)
 
     def forward(self, x):
         x = self.dropout(x)

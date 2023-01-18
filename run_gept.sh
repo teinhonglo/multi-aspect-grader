@@ -20,7 +20,8 @@ json_root="data-json/gept-p${part}/origin"
 # training config
 nj=4
 gpuid=0
-exp_root=exp/gept-p2/origin/wav2vec2-base/$problem_type/tanhhead_weight0.2
+train_conf=conf/train_gept.json
+exp_root=exp/gept-p2/origin/wav2vec2-base/$problem_type/tanhhead_wd1e-2_weight0.8
 
 # stage
 stage=0
@@ -47,7 +48,8 @@ if [ $stage -le 1 ]; then
     for score in $scores; do
         for fd in $folds; do
             CUDA_VISIBLE_DEVICES="$gpuid" \
-                python train.py --use-weight \
+                python train.py --class-weight-alpha 0.8 \
+                    --train-conf $train_conf \
                     --model-path $model_path \
                     --problem-type $problem_type \
                     --num-labels $num_labels \

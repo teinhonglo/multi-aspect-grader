@@ -11,7 +11,7 @@ from datasets import Dataset, Audio, load_from_disk
 import numpy as np
 
 # local import 
-from utils import make_dataset, DataCollatorCTCWithPadding, cal_class_weight
+from utils import make_dataset, DataCollatorCTCWithPadding, cal_class_weight, load_from_json
 from metrics_np import compute_metrics
 from model import Wav2vec2GraderModel
 
@@ -20,7 +20,9 @@ def main(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     config = AutoConfig.from_pretrained(
-        args.model_path, num_labels=args.num_labels, problem_type=args.problem_type
+        args.model_path, 
+        num_labels=args.num_labels, 
+        problem_type=args.problem_type
     )
     feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(args.model_path)
 
@@ -61,10 +63,15 @@ def main(args):
     #print("Save config/extractor to {} ...".format(args.exp_dir))
 
     # NOTE: class_weight cal from trainset
-    if args.use_weight:
-        print("Enable class weight ...")
-        class_weight = cal_class_weight(tr_dataset['label'], args.num_labels, alpha=0.2).to(device)
+    if args.class_weight_alpha != 0:
+        assert args.problem_type == "single_label_classification"
+        print("[INFO] Use class weight alpha {} ...".format(args.class_weight_alpha))
+        class_weight = cal_class_weight(tr_dataset['label'], args.num_labels, \
+            alpha=args.class_weight_alpha).to(device)
+        #print(class_weight)
+        #input()
     else:
+        print("[INFO] No class weight is provide ...")
         class_weight = None
     
     # NOTE: define model
@@ -95,26 +102,16 @@ def main(args):
         return total_losses
 
     # NOTE: define training args
+    train_args = load_from_json(args.train_conf)
     training_args = TrainingArguments(
         output_dir=args.exp_dir,
         group_by_length=True,
-        per_device_train_batch_size=4,  #4
-        gradient_accumulation_steps=2,  #1
-        per_device_eval_batch_size=8,   #8
-        evaluation_strategy="steps",
-        num_train_epochs=4, # 8
         fp16=True,
         gradient_checkpointing=True,
-        save_steps=200,
-        eval_steps=200,
-        logging_steps=100,
-        learning_rate=1e-5,
-        weight_decay=0, #0.005
-        warmup_steps=0,  #1000
-        save_total_limit=1,
         metric_for_best_model="within_0.5",
         greater_is_better=True,
-        load_best_model_at_end=True
+        load_best_model_at_end=True,
+        **train_args
     )
 
     trainer = Trainer(
@@ -142,8 +139,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--train-json', type=str, help="kaldi-format data", default="/share/nas167/fuann/asr/gop_speechocean762/s5/data/train")
     parser.add_argument('--valid-json', type=str, help="kaldi-format data", default="/share/nas167/fuann/asr/gop_speechocean762/s5/data/test")
+    parser.add_argument('--train-conf', type=str)
     parser.add_argument('--problem-type', default="regression", choices=['regression', 'single_label_classification'])
-    parser.add_argument('--use-weight', action='store_true', default=False)
+    parser.add_argument('--class-weight-alpha', type=float, default=0)
     parser.add_argument('--num-labels', type=int, default=1)
     parser.add_argument('--model-path', type=str, default="facebook/wav2vec2-large-xlsr-53")
     parser.add_argument("--resume", action='store_true', default=False)
