@@ -23,6 +23,7 @@ def main(args):
         args.model_path, 
         num_labels=args.num_labels, 
         problem_type=args.problem_type
+        
     )
     feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(args.model_path)
 
