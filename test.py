@@ -48,20 +48,11 @@ def main(args):
             input_values = torch.tensor(batch["input_values"], device=device).unsqueeze(0)
             logits = model(input_values, return_dict=True).logits
 
-        #with torch.no_grad():
-        #    features = feature_extractor(audio["array"], 
-        #        sampling_rate=feature_extractor.sampling_rate, 
-        #        return_tensors="pt", 
-        #        padding=True
-        #    )
-        #    input_values = features.input_values.to(device)
-        #    logits = model(input_values, return_dict=True).logits
-            
         if config.problem_type == "single_label_classification":
             pred_ids = torch.argmax(logits, dim=-1)+1
         else:
             pred_ids = logits
-        
+
         pred_ids = pred_ids.detach().cpu().numpy().item()
         batch["pred"] = pred_ids
 
@@ -71,24 +62,23 @@ def main(args):
     results = te_dataset.map(predict)
 
     # show metrics
-    '''
-    th_preds = torch.Tensor(results["pred"])
-    th_labels = torch.Tensor(results["label"])
-    mse = compute_mse(th_preds, th_labels).item()
-    within_05 = _accuracy_within_margin(th_preds, th_labels, 0.5, "cpu")
-    within_10 = _accuracy_within_margin(th_preds, th_labels, 1.0, "cpu")
-    '''
-
     print("predictions:")
     print("{}".format(results["pred"]))
     print("labels:")
     print("{}".format(results["label"]))
 
     total_losses = {}
-    compute_metrics(total_losses, np.array(results["pred"]), np.array(results["label"]))
+    compute_metrics(total_losses, np.array(results["pred"]), np.array(results["label"]), bins=args.bins)
     # show & write results
     results_file = os.path.join(args.exp_dir, "results.txt")
     with open(results_file, 'w') as wf:
+        if args.bins:
+            bins = np.array([float(b) for b in args.bins.split(",")]) if args.bins else None
+            print("with bins {}\n".format(bins))
+            wf.write("with bins {}\n".format(bins))
+        else:
+            print("without bins.\n")
+            wf.write("without bins.\n")
         for metrics, value in total_losses.items():
             print("{}: {}".format(metrics, value))
             wf.write("{}: {}\n".format(metrics, value))
@@ -97,13 +87,16 @@ def main(args):
     predictions_file = os.path.join(args.exp_dir, "predictions.txt")
     with open(predictions_file, 'w') as wf:
         for i in range(len(results)):
-            wf.write("{} | {} \n".format(results["pred"][i], results["label"][i]))
+            wf.write("{} {} {} \n".format( \
+                results["id"][i], results["pred"][i], results["label"][i])
+            )
 
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--test-json', type=str)
     parser.add_argument('--model-path', type=str, default="facebook/wav2vec2-base")
+    parser.add_argument('--bins', default=None, help="for calculating accuracy-related metrics, it should be [0, 0.5, 1, 1.5, ...]")
     parser.add_argument('--exp-dir', type=str)
     parser.add_argument('--nj', type=int, default=4)
     args = parser.parse_args()

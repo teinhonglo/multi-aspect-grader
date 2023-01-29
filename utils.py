@@ -68,7 +68,12 @@ class DataCollatorCTCWithPadding:
         # different padding methods
         input_features = [{"input_values": feature["input_values"]} for feature in features]
         label_features = [feature["labels"] for feature in features]
-        #d_type = torch.long if isinstance(label_features[0], int) else torch.float
+        #if self.problem_type == "single_label_classification":
+        #    label_features = [int(feature["labels"]) for feature in features]
+        #    d_type = torch.long
+        #else:
+        #    label_features = [feature["labels"] for feature in features]
+        #    d_type = torch.float
         d_type = torch.long if self.problem_type == "single_label_classification" else torch.float
 
         batch = self.feature_extractor.pad(

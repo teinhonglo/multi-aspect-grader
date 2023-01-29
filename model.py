@@ -97,6 +97,7 @@ class Wav2vec2GraderModel(Wav2Vec2PreTrainedModel):
             elif self.config.problem_type == "single_label_classification":
                 loss_fct = CrossEntropyLoss(weight=self.class_weight)
                 # labels 1-8 to 0-7
+                # NOTE: teemi: 1-9 to 0-8
                 labels = labels - 1
                 loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
             elif self.config.problem_type == "multi_label_classification":

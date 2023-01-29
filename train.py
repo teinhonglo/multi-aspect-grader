@@ -20,10 +20,10 @@ def main(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     config = AutoConfig.from_pretrained(
-        args.model_path, 
-        num_labels=args.num_labels, 
+        args.model_path,
+        num_labels=args.num_labels,
         problem_type=args.problem_type
-        
+
     )
     feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(args.model_path)
 
@@ -84,6 +84,7 @@ def main(args):
     def calculate_metrics(pred):
         
         # preds (0-7 to 1-8)
+        # NOTE: teemi: 0-8 to 1-9
         preds = pred.predictions
         preds = np.argmax(preds, axis=1) + 1 \
             if args.problem_type == "single_label_classification" else preds
@@ -99,7 +100,7 @@ def main(args):
         
         # metrics
         total_losses = {}
-        compute_metrics(total_losses, np.array(preds), np.array(labels))
+        compute_metrics(total_losses, np.array(preds), np.array(labels), bins=args.bins)
         return total_losses
 
     # NOTE: define training args
@@ -143,6 +144,7 @@ if __name__ == "__main__":
     parser.add_argument('--train-conf', type=str)
     parser.add_argument('--problem-type', default="regression", choices=['regression', 'single_label_classification'])
     parser.add_argument('--class-weight-alpha', type=float, default=0)
+    parser.add_argument('--bins', default=None, help="for calculating accuracy-related metrics, it should be [1, 1.5, 2, 2.5, ...]")
     parser.add_argument('--num-labels', type=int, default=1)
     parser.add_argument('--model-path', type=str, default="facebook/wav2vec2-large-xlsr-53")
     parser.add_argument("--resume", action='store_true', default=False)

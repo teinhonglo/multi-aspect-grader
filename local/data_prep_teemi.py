@@ -21,7 +21,7 @@ with open(args.tsv, "r") as rf:
     # text_id, wav_path, text, content, ,pronunciation, vocabulary
     for i, line in enumerate(rf.readlines()):
 
-        if i == 0:
+        if i == 0:  # header
             continue
 
         temp = line.strip().split('\t')
@@ -34,6 +34,9 @@ with open(args.tsv, "r") as rf:
             label = float(temp[4])
         elif args.score == "vocabulary":
             label = float(temp[5])
+
+        if label == 0.0:    # 無效音檔
+            continue
 
         basename = os.path.basename(wav).split('.')[0]
         data_dict["id"].append(basename)
