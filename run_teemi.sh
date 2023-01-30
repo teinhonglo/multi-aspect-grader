@@ -12,9 +12,9 @@ num_labels=1
 kfold=5
 folds=`seq 1 $kfold`
 scores="content pronunciation vocabulary"
-#scores="content"
+#scores="pronunciation vocabulary"
 test_book=1
-part=1
+part=2
 trans_type=trans_stt_tov_wod
 tsv_root=data-speaking/teemi-tb${test_book}p${part}/${trans_type}
 json_root=data-json/teemi-tb${test_book}p${part}/${trans_type}
@@ -29,6 +29,10 @@ exp_root=exp/teemi-tb${test_book}p${part}/$trans_type/wav2vec2-base/$problem_typ
 # eval config
 bins="1,1.5,2,2.5,3,3.5,4,4.5,5"
 #bins="1,2,3,4,5"
+
+# visualization config
+vi_bins="2,2.5,3,3.5,4,4.5,5"
+vi_labels="pre-A,A1,A1A2,A2,A2B1,B1,B1B2,B2"
 
 # stage
 stage=0
@@ -85,4 +89,11 @@ if [ $stage -le 3 ]; then
     # produce result in $exp_root/report.log
     python local/make_report.py \
         --result_root $exp_root --scores "$scores" --folds "$folds"
+fi
+
+if [ $stage -le 4 ]; then
+    # produce confusion matrix in $exp_root/score_name.png
+    python local/visualization.py \
+        --result_root $exp_root --scores "$scores" --folds "$folds" \
+        --bins "$vi_bins" --labels "$vi_labels"
 fi
