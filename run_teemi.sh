@@ -1,13 +1,6 @@
 #!/bin/bash
 # dependency: torch, torchaudio, transformers, datasets, librosa
 
-# wav2cec2 config
-model_path="facebook/wav2vec2-base"
-# problem type [regression, single_label_classification]
-problem_type="regression"
-num_labels=1
-[ "$problem_type" == "single_label_classification" ] && num_labels=9
-
 # data config
 kfold=5
 folds=`seq 1 $kfold`
@@ -19,6 +12,13 @@ trans_type=trans_stt_tov_wod
 tsv_root=data-speaking/teemi-tb${test_book}p${part}/${trans_type}
 json_root=data-json/teemi-tb${test_book}p${part}/${trans_type}
 
+# wav2cec2 config
+model_path="facebook/wav2vec2-base"
+# problem type [regression, single_label_classification]
+problem_type="regression"
+num_labels=1
+[ "$problem_type" == "single_label_classification" ] && num_labels=9
+
 # training config
 nj=4
 gpuid=0
@@ -27,11 +27,11 @@ conf=$(basename -s .json $train_conf)
 exp_root=exp/teemi-tb${test_book}p${part}/$trans_type/wav2vec2-base/$problem_type/${conf}
 
 # eval config
-bins="1,1.5,2,2.5,3,3.5,4,4.5,5"
+bins="1,2,2.5,3,3.5,4,4.5,5" # no 1.5 score (pre-A-A1)
 #bins="1,2,3,4,5"
 
 # visualization config
-vi_bins="2,2.5,3,3.5,4,4.5,5"
+vi_bins="2,2.5,3,3.5,4,4.5,5" # below A1(2) is pre-A
 vi_labels="pre-A,A1,A1A2,A2,A2B1,B1,B1B2,B2"
 
 # stage
@@ -90,7 +90,7 @@ if [ $stage -le 3 ]; then
     python local/make_report.py \
         --result_root $exp_root --scores "$scores" --folds "$folds"
 fi
-
+exit 0
 if [ $stage -le 4 ]; then
     # produce confusion matrix in $exp_root/score_name.png
     python local/visualization.py \
