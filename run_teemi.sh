@@ -4,35 +4,38 @@
 # data config
 kfold=5
 folds=`seq 1 $kfold`
-scores="content pronunciation vocabulary"
-#scores="pronunciation vocabulary"
+#scores="content pronunciation vocabulary"
+scores="content"
 test_book=1
-part=2
-trans_type=trans_stt_tov_wod
+part=1
+trans_type=trans_stt_tov
 tsv_root=data-speaking/teemi-tb${test_book}p${part}/${trans_type}
 json_root=data-json/teemi-tb${test_book}p${part}/${trans_type}
 
 # wav2cec2 config
 model_path="facebook/wav2vec2-base"
 # problem type [regression, single_label_classification]
-problem_type="regression"
-num_labels=1
-[ "$problem_type" == "single_label_classification" ] && num_labels=9
+problem_type="single_label_classification"
+num_labels=8    # when regression set 1, else 8
 
 # training config
 nj=4
 gpuid=0
 train_conf=conf/train_teemi.json
 conf=$(basename -s .json $train_conf)
-exp_root=exp/teemi-tb${test_book}p${part}/$trans_type/wav2vec2-base/$problem_type/${conf}
+exp_root=exp/teemi-tb${test_book}p${part}/$trans_type/wav2vec2-base/$problem_type/${conf}_cw1.0
 
 # eval config
-bins="1,2,2.5,3,3.5,4,4.5,5" # no 1.5 score (pre-A-A1)
-#bins="1,2,3,4,5"
+bins=""
 
 # visualization config
-vi_bins="2,2.5,3,3.5,4,4.5,5" # below A1(2) is pre-A
 vi_labels="pre-A,A1,A1A2,A2,A2B1,B1,B1B2,B2"
+vi_bins=""
+
+if [ "$problem_type" == "regression" ]; then
+    bins="1,2,2.5,3,3.5,4,4.5,5"  # no 1.5 score (pre-A-A1)
+    vi_bins="2,2.5,3,3.5,4,4.5,5" # below A1(2) is pre-A
+fi
 
 # stage
 stage=0
@@ -58,7 +61,7 @@ if [ $stage -le 1 ]; then
     for score in $scores; do
         for fd in $folds; do
             CUDA_VISIBLE_DEVICES="$gpuid" \
-                python train.py  \
+                python train.py  --class-weight-alpha 1.0 \
                     --train-conf $train_conf \
                     --model-path $model_path \
                     --problem-type $problem_type \
@@ -76,7 +79,7 @@ if [ $stage -le 2 ]; then
         for fd in $folds; do
             #[ ! -d $exp_root/$score/$fd/bins9 ] && mkdir -p $exp_root/$score/$fd/bins9
             CUDA_VISIBLE_DEVICES="$gpuid" \
-                python test.py --bins $bins \
+                python test.py --bins "$bins" \
                     --model-path $exp_root/$score/$fd/best \
                     --test-json $json_root/$score/$fd/test.json \
                     --exp-dir $exp_root/$score/$fd \
@@ -90,7 +93,7 @@ if [ $stage -le 3 ]; then
     python local/make_report.py \
         --result_root $exp_root --scores "$scores" --folds "$folds"
 fi
-exit 0
+
 if [ $stage -le 4 ]; then
     # produce confusion matrix in $exp_root/score_name.png
     python local/visualization.py \

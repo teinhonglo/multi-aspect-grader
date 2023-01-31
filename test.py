@@ -49,7 +49,7 @@ def main(args):
             logits = model(input_values, return_dict=True).logits
 
         if config.problem_type == "single_label_classification":
-            pred_ids = torch.argmax(logits, dim=-1)+1
+            pred_ids = torch.argmax(logits, dim=-1) + 1
         else:
             pred_ids = logits
 
@@ -96,7 +96,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--test-json', type=str)
     parser.add_argument('--model-path', type=str, default="facebook/wav2vec2-base")
-    parser.add_argument('--bins', default=None, help="for calculating accuracy-related metrics, it should be [0, 0.5, 1, 1.5, ...]")
+    parser.add_argument('--bins', type=str, help="for calculating accuracy-related metrics, it should be [0, 0.5, 1, 1.5, ...]")
     parser.add_argument('--exp-dir', type=str)
     parser.add_argument('--nj', type=int, default=4)
     args = parser.parse_args()

@@ -15,7 +15,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--result_root",
                     default="runs-speaking/gept-p3/trans_stt_tov_round/bert-model",
                     type=str)
-                    
+
 parser.add_argument("--scores",
                     default="content pronunciation vocabulary",
                     type=str)
@@ -37,7 +37,7 @@ args = parser.parse_args()
 result_root = args.result_root
 scores = args.scores.split()
 folds = args.folds.split()
-bins = np.array([ float(ab) for ab in args.bins.split(",")])
+bins = np.array([ float(ab) for ab in args.bins.split(",")]) if args.bins else None
 labels = args.labels.split(",")
 
 for score in scores:
@@ -52,15 +52,21 @@ for score in scores:
             for line in rf.readlines():
                 result = line.strip().split(" ")
                 id, pred, label = result[0], result[1], result[2]
-                all_preds.append(pred)
-                all_labels.append(label)
-    
+                all_preds.append(float(pred))
+                all_labels.append(float(label))
+
     # cal confusion matrix
     file_name = os.path.join(result_root, score)
     png_name = file_name + ".png"
+    all_preds = np.array(all_preds)
+    all_labels = np.array(all_labels)
 
-    all_preds = np.digitize(all_preds, bins)
-    all_labels = np.digitize(all_labels, bins)
+    if args.bins:
+        all_preds = np.digitize(all_preds, bins)
+        all_labels = np.digitize(all_labels, bins)
+    else:   # for classification, map 1 ~ n_labels to 0 ~ n_labels-1
+        all_preds = all_preds - 1
+        all_labels = all_labels - 1
 
     conf_mat = confusion_matrix(all_labels, all_preds, labels=range(len(labels)))
     row_sum = np.sum(conf_mat, axis = 1)

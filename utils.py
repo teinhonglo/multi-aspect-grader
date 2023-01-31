@@ -22,7 +22,8 @@ def cal_class_weight(labels, n_classes, alpha=1.0, epsilon=1e-5):
     for c in range(n_classes):
         indices = np.where(labels == (c+1))
         n_samples_each[c] = len(labels[indices])
-    class_weight = np.power(n_samples, alpha) / n_classes * np.power(n_samples_each, alpha)
+    #class_weight = np.power(n_samples, alpha) / n_classes * np.power(n_samples_each, alpha)
+    class_weight = np.power(n_samples, alpha) / np.power(n_samples_each, alpha)
     class_weight[np.isinf(class_weight)] = 0
     
     '''
