@@ -22,6 +22,9 @@ train_conf=conf/train_icnale.json
 exp_root=exp/icnale/wav2vec2-base/$problem_type/baseline
 dropout=0.2
 
+# eval config
+bins=""
+
 # visualization config
 vi_labels="A2,B1_1,B1_2,B2,native"
 vi_bins=""
@@ -78,6 +81,12 @@ if [ $stage -le 2 ]; then
 fi
 
 if [ $stage -le 3 ]; then
+    # produce result in $exp_root/report.log
+    python make_report.py --bins "$bins" \
+        --result_root $exp_root --scores "$scores" --folds "$folds"
+fi
+
+if [ $stage -le 4 ]; then
     # produce confusion matrix in $exp_root/score_name.png
     python local/visualization.py \
         --result_root $exp_root --scores "$scores" --folds "$folds" \
