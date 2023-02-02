@@ -67,6 +67,7 @@ def main(args):
     print("labels:")
     print("{}".format(results["label"]))
 
+    '''
     total_losses = {}
     compute_metrics(total_losses, np.array(results["pred"]), np.array(results["label"]), bins=args.bins)
     # show & write results
@@ -82,6 +83,7 @@ def main(args):
         for metrics, value in total_losses.items():
             print("{}: {}".format(metrics, value))
             wf.write("{}: {}\n".format(metrics, value))
+    '''
 
     # write predictions
     predictions_file = os.path.join(args.exp_dir, "predictions.txt")

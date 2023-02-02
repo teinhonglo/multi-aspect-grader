@@ -1,5 +1,7 @@
 #!/bin/bash
 # dependency: torch, torchaudio, transformers, datasets, librosa
+# stage
+stage=1
 
 # data config
 kfold=5
@@ -8,22 +10,19 @@ folds=`seq 1 $kfold`
 scores="content"
 test_book=1
 part=1
-trans_type=trans_stt_tov
-tsv_root=data-speaking/teemi-tb${test_book}p${part}/${trans_type}
-json_root=data-json/teemi-tb${test_book}p${part}/${trans_type}
+trans_type=trans_stt_tov_wod_spk
 
 # wav2cec2 config
 model_path="facebook/wav2vec2-base"
 # problem type [regression, single_label_classification]
-problem_type="single_label_classification"
-num_labels=8    # when regression set 1, else 8
+problem_type="regression"
+num_labels=1    # when regression set 1, else 8
 
 # training config
 nj=4
 gpuid=0
 train_conf=conf/train_teemi.json
 conf=$(basename -s .json $train_conf)
-exp_root=exp/teemi-tb${test_book}p${part}/$trans_type/wav2vec2-base/$problem_type/${conf}_cw1.0
 
 # eval config
 bins=""
@@ -37,11 +36,12 @@ if [ "$problem_type" == "regression" ]; then
     vi_bins="2,2.5,3,3.5,4,4.5,5" # below A1(2) is pre-A
 fi
 
-# stage
-stage=0
-
 . ./local/parse_options.sh
 . ./path.sh
+
+tsv_root=data-speaking/teemi-tb${test_book}p${part}/${trans_type}
+json_root=data-json/teemi-tb${test_book}p${part}/${trans_type}
+exp_root=exp/teemi-tb${test_book}p${part}/$trans_type/wav2vec2-base/$problem_type/${conf}
 
 if [ $stage -le 0 ]; then
     for score in $scores; do
@@ -61,7 +61,7 @@ if [ $stage -le 1 ]; then
     for score in $scores; do
         for fd in $folds; do
             CUDA_VISIBLE_DEVICES="$gpuid" \
-                python train.py  --class-weight-alpha 1.0 \
+                python train.py \
                     --train-conf $train_conf \
                     --model-path $model_path \
                     --problem-type $problem_type \
@@ -90,7 +90,7 @@ fi
 
 if [ $stage -le 3 ]; then
     # produce result in $exp_root/report.log
-    python local/make_report.py \
+    python make_report.py --bins "$bins" --merge-speaker \
         --result_root $exp_root --scores "$scores" --folds "$folds"
 fi
 

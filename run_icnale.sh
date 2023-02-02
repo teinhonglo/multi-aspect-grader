@@ -2,7 +2,7 @@
 # dependency: torch, torchaudio, transformers, datasets, librosa
 
 # wav2cec2 config
-model_path="patrickvonplaten/wav2vec2-base"
+model_path="facebook/wav2vec2-base"
 # problem type [regression, single_label_classification]
 problem_type="single_label_classification"
 num_labels=1
@@ -19,10 +19,15 @@ json_root="data-json/icnale/trans_stt_whisperv2_large"
 nj=4
 gpuid=0
 train_conf=conf/train_icnale.json
-exp_root=exp/icnale/wav2vec2-base/$problem_type/base_slt
+exp_root=exp/icnale/wav2vec2-base/$problem_type/baseline
+dropout=0.2
+
+# visualization config
+vi_labels="A2,B1_1,B1_2,B2,native"
+vi_bins=""
 
 # stage
-stage=0
+stage=1
 
 . ./local/parse_options.sh
 . ./path.sh
@@ -46,7 +51,7 @@ if [ $stage -le 1 ]; then
     for score in $scores; do
         for fd in $folds; do
             CUDA_VISIBLE_DEVICES="$gpuid" \
-                python train.py \
+                python train.py --final-dropout $dropout --resume \
                     --train-conf $train_conf \
                     --model-path $model_path \
                     --problem-type $problem_type \
@@ -70,4 +75,11 @@ if [ $stage -le 2 ]; then
                     --nj $nj || exit 1
         done
     done
+fi
+
+if [ $stage -le 3 ]; then
+    # produce confusion matrix in $exp_root/score_name.png
+    python local/visualization.py \
+        --result_root $exp_root --scores "$scores" --folds "$folds" \
+        --bins "$vi_bins" --labels "$vi_labels"
 fi

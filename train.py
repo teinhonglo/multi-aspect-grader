@@ -22,8 +22,8 @@ def main(args):
     config = AutoConfig.from_pretrained(
         args.model_path,
         num_labels=args.num_labels,
-        problem_type=args.problem_type
-
+        problem_type=args.problem_type,
+        final_dropout=args.final_dropout
     )
     feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(args.model_path)
 
@@ -42,6 +42,7 @@ def main(args):
         tr_dataset = tr_dataset.map(preprocess_function, num_proc=args.nj)
         tr_dataset.save_to_disk(train_dataset_path)
     else:
+        print("[INFO] {} exists, using it".format(train_dataset_path + "/dataset.arrow"))
         tr_dataset = load_from_disk(train_dataset_path)
     
     # valid set
@@ -51,6 +52,7 @@ def main(args):
         cv_dataset = cv_dataset.map(preprocess_function, num_proc=args.nj)
         cv_dataset.save_to_disk(valid_dataset_path)
     else:
+        print("[INFO] {} exists, using it".format(valid_dataset_path + "/dataset.arrow"))
         cv_dataset = load_from_disk(valid_dataset_path)
 
     # data collator
@@ -110,8 +112,6 @@ def main(args):
         group_by_length=True,
         fp16=True,
         gradient_checkpointing=True,
-        metric_for_best_model="within_0.5",
-        greater_is_better=True,
         load_best_model_at_end=True,
         **train_args
     )
@@ -144,6 +144,7 @@ if __name__ == "__main__":
     parser.add_argument('--train-conf', type=str)
     parser.add_argument('--problem-type', default="regression", choices=['regression', 'single_label_classification'])
     parser.add_argument('--class-weight-alpha', type=float, default=0)
+    parser.add_argument('--final-dropout', type=float, default=0)
     parser.add_argument('--bins', default=None, help="for calculating accuracy-related metrics, it should be [1, 1.5, 2, 2.5, ...]")
     parser.add_argument('--num-labels', type=int, default=1)
     parser.add_argument('--model-path', type=str, default="facebook/wav2vec2-large-xlsr-53")

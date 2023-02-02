@@ -1,5 +1,5 @@
 '''
-concate k-fold predictions, plot confusion matrix.
+take predictions.txt, plot confusion matrix.
 '''
 
 import argparse
@@ -45,15 +45,14 @@ for score in scores:
     all_preds = []
     all_labels = []
 
-    # concat k-fold preds, labels
-    for fold in folds:
-        path = result_root + '/' + score + '/' + fold
-        with open(path + "/predictions.txt", "r") as rf:
-            for line in rf.readlines():
-                result = line.strip().split(" ")
-                id, pred, label = result[0], result[1], result[2]
-                all_preds.append(float(pred))
-                all_labels.append(float(label))
+    # take all preds, labels in predictions.txt
+    path = result_root + '/' + score
+    with open(path + "/predictions.txt", "r") as rf:
+        for line in rf.readlines():
+            result = line.strip().split(" ")
+            id, pred, label = result[0], result[1], result[2]
+            all_preds.append(float(pred))
+            all_labels.append(float(label))
 
     # cal confusion matrix
     file_name = os.path.join(result_root, score)
