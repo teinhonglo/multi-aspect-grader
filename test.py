@@ -12,7 +12,7 @@ import numpy as np
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Union
 
-# local import 
+# local import
 from utils import make_dataset
 #from metrics_np import compute_mse, _accuracy_within_margin
 from metrics_np import compute_metrics
@@ -40,6 +40,7 @@ def main(args):
         te_dataset = te_dataset.map(preprocess_function, num_proc=args.nj)
         te_dataset.save_to_disk(test_dataset_path)
     else:
+        print("[INFO] {} exists, using it".format(test_dataset_path + "/dataset.arrow"))
         te_dataset = load_from_disk(test_dataset_path)
 
     # forward
@@ -61,29 +62,11 @@ def main(args):
     # output [pred] [label] is list
     results = te_dataset.map(predict)
 
-    # show metrics
+    # show pred results
     print("predictions:")
     print("{}".format(results["pred"]))
     print("labels:")
     print("{}".format(results["label"]))
-
-    '''
-    total_losses = {}
-    compute_metrics(total_losses, np.array(results["pred"]), np.array(results["label"]), bins=args.bins)
-    # show & write results
-    results_file = os.path.join(args.exp_dir, "results.txt")
-    with open(results_file, 'w') as wf:
-        if args.bins:
-            bins = np.array([float(b) for b in args.bins.split(",")]) if args.bins else None
-            print("with bins {}\n".format(bins))
-            wf.write("with bins {}\n".format(bins))
-        else:
-            print("without bins.\n")
-            wf.write("without bins.\n")
-        for metrics, value in total_losses.items():
-            print("{}: {}".format(metrics, value))
-            wf.write("{}: {}\n".format(metrics, value))
-    '''
 
     # write predictions
     predictions_file = os.path.join(args.exp_dir, "predictions.txt")

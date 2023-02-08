@@ -10,7 +10,7 @@ from datasets import Dataset, Audio, load_from_disk
 
 import numpy as np
 
-# local import 
+# local import
 from utils import make_dataset, DataCollatorCTCWithPadding, cal_class_weight, load_from_json
 from metrics_np import compute_metrics
 from model import Wav2vec2GraderModel
@@ -23,7 +23,7 @@ def main(args):
         args.model_path,
         num_labels=args.num_labels,
         problem_type=args.problem_type,
-        final_dropout=args.final_dropout
+        final_dropout=args.final_dropout,
     )
     feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(args.model_path)
 
@@ -44,7 +44,7 @@ def main(args):
     else:
         print("[INFO] {} exists, using it".format(train_dataset_path + "/dataset.arrow"))
         tr_dataset = load_from_disk(train_dataset_path)
-    
+
     # valid set
     valid_dataset_path = os.path.dirname(args.valid_json) + "/valid_dataset"
     if not os.path.exists(valid_dataset_path + "/dataset.arrow"):
@@ -60,11 +60,6 @@ def main(args):
         feature_extractor=feature_extractor, problem_type=args.problem_type, padding=True
     )
 
-    # save to exp_dir
-    #config.save_pretrained(args.exp_dir)
-    #feature_extractor.save_pretrained(args.exp_dir)
-    #print("Save config/extractor to {} ...".format(args.exp_dir))
-
     # NOTE: class_weight cal from trainset
     if args.class_weight_alpha != 0:
         assert args.problem_type == "single_label_classification"
@@ -76,15 +71,21 @@ def main(args):
     else:
         print("[INFO] No class weight is provide ...")
         class_weight = None
-    
+
     # NOTE: define model
-    model = Wav2vec2GraderModel.from_pretrained(args.model_path, config=config, class_weight=class_weight)
-    model.freeze_feature_extractor()
+    if args.local_path:
+        print("[INFO] Load pretrained model from {} ...".format(args.local_path))
+        local_model = Wav2vec2GraderModel.from_pretrained(args.local_path)
+        model = Wav2vec2GraderModel(config=config, class_weight=class_weight)
+        model.load_pretrained_wav2vec2(local_model.wav2vec2.state_dict())
+    else:
+        model = Wav2vec2GraderModel.from_pretrained(args.model_path, config=config, class_weight=class_weight)
+        model.freeze_feature_extractor()
     model.gradient_checkpointing_enable()
 
     # NOTE: define metric
     def calculate_metrics(pred):
-        
+
         # preds (0-7 to 1-8)
         # NOTE: teemi: 0-8 to 1-9
         preds = pred.predictions
@@ -99,7 +100,7 @@ def main(args):
         print("labels:")
         print("{}".format(labels))
         print("\n\n")
-        
+
         # metrics
         total_losses = {}
         compute_metrics(total_losses, np.array(preds), np.array(labels), bins=args.bins)
@@ -130,7 +131,7 @@ def main(args):
         trainer.train(resume_from_checkpoint=True)
     else:
         trainer.train()
-    
+
     # save the best model
     best_path = os.path.join(args.exp_dir, 'best')
     trainer.save_model(best_path)
@@ -148,6 +149,7 @@ if __name__ == "__main__":
     parser.add_argument('--bins', default=None, help="for calculating accuracy-related metrics, it should be [1, 1.5, 2, 2.5, ...]")
     parser.add_argument('--num-labels', type=int, default=1)
     parser.add_argument('--model-path', type=str, default="facebook/wav2vec2-large-xlsr-53")
+    parser.add_argument('--local-path', type=str, default=None)
     parser.add_argument("--resume", action='store_true', default=False)
     parser.add_argument('--exp-dir', type=str, default="exp-finetune/facebook/wav2vec2-large-xlsr-53")
     parser.add_argument('--nj', type=int, default=4)

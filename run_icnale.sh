@@ -4,7 +4,7 @@
 # wav2cec2 config
 model_path="facebook/wav2vec2-base"
 # problem type [regression, single_label_classification]
-problem_type="single_label_classification"
+problem_type="regression"
 num_labels=1
 [ "$problem_type" == "single_label_classification" ] && num_labels=5
 
@@ -17,7 +17,7 @@ json_root="data-json/icnale/trans_stt_whisperv2_large"
 
 # training config
 nj=4
-gpuid=0
+gpuid=2
 train_conf=conf/train_icnale.json
 exp_root=exp/icnale/wav2vec2-base/$problem_type/baseline
 dropout=0.2
@@ -34,6 +34,11 @@ stage=1
 
 . ./local/parse_options.sh
 . ./path.sh
+
+if [ "$problem_type" == "regression" ]; then
+    bins="1.5,2.5,3.5,4.5" 
+    vi_bins="1.5,2.5,3.5,4.5"
+fi
 
 if [ $stage -le 0 ]; then
     for score in $scores; do
@@ -54,7 +59,7 @@ if [ $stage -le 1 ]; then
     for score in $scores; do
         for fd in $folds; do
             CUDA_VISIBLE_DEVICES="$gpuid" \
-                python train.py --final-dropout $dropout --resume \
+                python train.py --final-dropout $dropout \
                     --train-conf $train_conf \
                     --model-path $model_path \
                     --problem-type $problem_type \

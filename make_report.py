@@ -2,12 +2,12 @@
 Produce final report by averaging folds results.txt
 also write all predictions for each scores
 
-take    
+take
     score/fold/predictions.txt
-write   
+write
     score/fold/results.txt (each fold results)
-    score/predictions.txt (all)
-    score/report.log (avg folds)
+    score/predictions.txt (all predictions in kfolds)
+    score/report.log (avg kfolds)
 '''
 
 import argparse
@@ -42,8 +42,9 @@ result_root = args.result_root
 bins = np.array([float(b) for b in args.bins.split(",")]) if args.bins else None
 scores = args.scores.split()
 folds = args.folds.split()
+suffix = ".spk" if args.merge_speaker else ""
 
-def predictions_to_list(predictions_file, merge_speaker=False):
+def predictions_to_list(predictions_file, merge_speaker=False, bins=""):
 
     # make dictionary
     pred_dict = defaultdict(list)
@@ -53,14 +54,16 @@ def predictions_to_list(predictions_file, merge_speaker=False):
             result = line.strip().split(" ")
             id, pred, label = result[0], result[1], result[2]
             if merge_speaker:
-                # u48_t11_p4_i19_1-5_20221024
-                id = id.split('_')[0]
+                # A01_u49_t9_p4_i19_1-5_20220919_0
+                id = id.split('_')[1]
             pred_dict[id].append(float(pred))
             label_dict[id].append(float(label))
 
     ids, preds, labels = [], [], []
     for id, pred in pred_dict.items():
         pred = sum(pred) / len(pred)
+        if not bins:
+            pred = np.round(pred)
         label = sum(label_dict[id]) / len(label_dict[id])
         ids.append(id)
         preds.append(pred)
@@ -82,11 +85,11 @@ for score in scores:
     for fold in folds:
 
         predictions_file = result_root + '/' + score + '/' + fold + '/predictions.txt'
-        results_file = result_root + '/' + score + '/' + fold + '/results.txt'
+        results_file = result_root + '/' + score + '/' + fold + '/results{}.txt'.format(suffix)
         total_losses = {}
 
         # get list of ids, preds, labels
-        ids, preds, labels = predictions_to_list(predictions_file, merge_speaker=args.merge_speaker)
+        ids, preds, labels = predictions_to_list(predictions_file, merge_speaker=args.merge_speaker, bins=args.bins)
         compute_metrics(total_losses, np.array(preds), np.array(labels), bins=args.bins)
 
         # write fold results.txt
@@ -114,13 +117,13 @@ for score in scores:
         all_labels += labels
 
     # NOTE: write all predictions for each score
-    path = result_root + '/' + score + '/predictions.txt'
+    path = result_root + '/' + score + '/predictions{}.txt'.format(suffix)
     with open(path, "w") as wf:
         for id, pred, label in zip(all_ids, all_preds, all_labels):
             wf.write("{} {} {} \n".format(id, pred, label))
 
 # NOTE: write report
-path = result_root + '/report.log'
+path = result_root + '/report{}.log'.format(suffix)
 
 with open(path, "w") as wf:
     wf.write("with bins {}\n".format(bins))

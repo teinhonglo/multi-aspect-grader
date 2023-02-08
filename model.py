@@ -9,7 +9,7 @@ from transformers.models.wav2vec2.modeling_wav2vec2 import (
     Wav2Vec2Model
 )
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
-
+        
 class MeanPooling(nn.Module):
     def __init__(self):
         super(MeanPooling, self).__init__()
@@ -57,7 +57,15 @@ class Wav2vec2GraderModel(Wav2Vec2PreTrainedModel):
 
         self.init_weights()
 
+    def freeze(self, module):
+        for parameter in module.parameters():
+            parameter.requires_grad = False
+
     def freeze_feature_extractor(self):
+        self.wav2vec2.feature_extractor._freeze_parameters()
+
+    def load_pretrained_wav2vec2(self, state_dict):
+        self.wav2vec2.load_state_dict(state_dict)
         self.wav2vec2.feature_extractor._freeze_parameters()
 
     def forward(self,
