@@ -3,7 +3,7 @@
 # stage
 stage=1
 # gpu
-gpuid=2
+gpuid=3
 
 # data config
 kfold=5
@@ -12,15 +12,18 @@ folds=`seq 1 $kfold`
 scores="content"
 test_book=1
 part=1
-trans_type=trans_stt_tov_wod
+trans_type=trans_stt_tov   # trans_stt_tov -> cls, trans_stt_tov_wod -> reg
 
 # wav2cec2 config
 model_path="facebook/wav2vec2-base"
-local_path="exp/icnale/wav2vec2-base/single_label_classification/baseline/holistic/1/best"
+#local_path="exp/icnale/wav2vec2-base/regression/baseline/holistic/1/best"	# finetune
 # problem type [regression, single_label_classification]
-problem_type="regression"
-num_labels=1    # when regression set 1, else 8
+problem_type="single_label_classification"
+num_labels=8    # when regression set 1, else 8
 class_weight_alpha=0.0
+# model type [baseline, prototype]
+model_type="prototype"
+num_prototypes=3
 
 # training config
 nj=4
@@ -39,7 +42,7 @@ vi_bins=""
 
 tsv_root=data-speaking/teemi-tb${test_book}p${part}/${trans_type}
 json_root=data-json/teemi-tb${test_book}p${part}/${trans_type}
-exp_root=exp/teemi-tb${test_book}p${part}/$trans_type/wav2vec2-base/$problem_type/${conf}_new_icnaleft3
+exp_root=exp/teemi-tb${test_book}p${part}/$trans_type/wav2vec2-base/$problem_type/${model_type}_sed
 
 if [ "$problem_type" == "regression" ]; then
     bins="1,2,2.5,3,3.5,4,4.5,5"  # no 1.5 score (pre-A-A1)
@@ -68,8 +71,9 @@ if [ $stage -le 1 ]; then
                 python train.py  --class-weight-alpha $class_weight_alpha \
                     --train-conf $train_conf \
                     --model-path $model_path \
-                    --local-path $local_path \
                     --problem-type $problem_type \
+                    --model-type $model_type \
+                    --num-prototypes $num_prototypes \
                     --num-labels $num_labels \
                     --train-json $json_root/$score/$fd/train.json \
                     --valid-json $json_root/$score/$fd/valid.json \
@@ -85,6 +89,7 @@ if [ $stage -le 2 ]; then
             #[ ! -d $exp_root/$score/$fd/bins9 ] && mkdir -p $exp_root/$score/$fd/bins9
             CUDA_VISIBLE_DEVICES="$gpuid" \
                 python test.py --bins "$bins" \
+                    --model-type $model_type \
                     --model-path $exp_root/$score/$fd/best \
                     --test-json $json_root/$score/$fd/test.json \
                     --exp-dir $exp_root/$score/$fd \

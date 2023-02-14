@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional, Union
 from utils import make_dataset
 #from metrics_np import compute_mse, _accuracy_within_margin
 from metrics_np import compute_metrics
-from model import Wav2vec2GraderModel
+from model import Wav2vec2GraderModel, Wav2vec2GraderPrototypeModel
 
 def main(args):
 
@@ -24,7 +24,10 @@ def main(args):
 
     config = AutoConfig.from_pretrained(args.model_path)
     feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(args.model_path)
-    model = Wav2vec2GraderModel.from_pretrained(args.model_path).to(device)
+    if args.model_type == 'prototype':
+        model = Wav2vec2GraderPrototypeModel.from_pretrained(args.model_path).to(device)
+    else:
+        model = Wav2vec2GraderModel.from_pretrained(args.model_path).to(device)
 
     # loading test set
     def preprocess_function(batch):
@@ -81,6 +84,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--test-json', type=str)
     parser.add_argument('--model-path', type=str, default="facebook/wav2vec2-base")
+    parser.add_argument('--model-type', default="baseline", choices=['baseline', 'prototype'])
     parser.add_argument('--bins', type=str, help="for calculating accuracy-related metrics, it should be [0, 0.5, 1, 1.5, ...]")
     parser.add_argument('--exp-dir', type=str)
     parser.add_argument('--nj', type=int, default=4)

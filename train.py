@@ -13,7 +13,7 @@ import numpy as np
 # local import
 from utils import make_dataset, DataCollatorCTCWithPadding, cal_class_weight, load_from_json
 from metrics_np import compute_metrics
-from model import Wav2vec2GraderModel
+from model import Wav2vec2GraderModel, Wav2vec2GraderPrototypeModel
 
 def main(args):
 
@@ -64,24 +64,31 @@ def main(args):
     if args.class_weight_alpha != 0:
         assert args.problem_type == "single_label_classification"
         print("[INFO] Use class weight alpha {} ...".format(args.class_weight_alpha))
-        class_weight = cal_class_weight(tr_dataset['label'], args.num_labels, \
+        class_weight = cal_class_weight(tr_dataset['labels'], args.num_labels, \
             alpha=args.class_weight_alpha).to(device)
-        #print(class_weight)
-        #input()
     else:
         print("[INFO] No class weight is provide ...")
         class_weight = None
 
     # NOTE: define model
     if args.local_path:
-        print("[INFO] Load pretrained model from {} ...".format(args.local_path))
+        print("[INFO] Load pretrained {} model from {} ...".format(args.model_type, args.local_path))
         local_model = Wav2vec2GraderModel.from_pretrained(args.local_path)
-        model = Wav2vec2GraderModel(config=config, class_weight=class_weight)
+        if args.model_type == "prototype":
+            model = Wav2vec2GraderPrototypeModel(config=config, class_weight=class_weight, num_prototypes=args.num_prototypes, dist=args.dist)
+        else:
+            model = Wav2vec2GraderModel(config=config, class_weight=class_weight)
         model.load_pretrained_wav2vec2(local_model.wav2vec2.state_dict())
     else:
-        model = Wav2vec2GraderModel.from_pretrained(args.model_path, config=config, class_weight=class_weight)
+        print("[INFO] Train a {} model from {} ...".format(args.model_type, args.model_path))
+        if args.model_type == "prototype":
+            model = Wav2vec2GraderPrototypeModel.from_pretrained(args.model_path, config=config, class_weight=class_weight, num_prototypes=args.num_prototypes, dist=args.dist)
+            if args.init_prototypes:
+                model.init_prototypes(tr_dataset, path=train_dataset_path)
+        else:
+            model = Wav2vec2GraderModel.from_pretrained(args.model_path, config=config, class_weight=class_weight)
         model.freeze_feature_extractor()
-    model.gradient_checkpointing_enable()
+    #model.gradient_checkpointing_enable()
 
     # NOTE: define metric
     def calculate_metrics(pred):
@@ -112,7 +119,6 @@ def main(args):
         output_dir=args.exp_dir,
         group_by_length=True,
         fp16=True,
-        gradient_checkpointing=True,
         load_best_model_at_end=True,
         **train_args
     )
@@ -144,6 +150,10 @@ if __name__ == "__main__":
     parser.add_argument('--valid-json', type=str, help="kaldi-format data", default="/share/nas167/fuann/asr/gop_speechocean762/s5/data/test")
     parser.add_argument('--train-conf', type=str)
     parser.add_argument('--problem-type', default="regression", choices=['regression', 'single_label_classification'])
+    parser.add_argument('--model-type', default="baseline", choices=['baseline', 'prototype'])
+    parser.add_argument('--num-prototypes', type=int, default=3, help="use when --model-type prototype")
+    parser.add_argument('--init-prototypes', action="store_true", default=False)
+    parser.add_argument('--dist', type=str, default="sed", help="use when --model-type prototype")
     parser.add_argument('--class-weight-alpha', type=float, default=0)
     parser.add_argument('--final-dropout', type=float, default=0)
     parser.add_argument('--bins', default=None, help="for calculating accuracy-related metrics, it should be [1, 1.5, 2, 2.5, ...]")

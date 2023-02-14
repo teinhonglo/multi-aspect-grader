@@ -4,9 +4,13 @@
 # wav2cec2 config
 model_path="facebook/wav2vec2-base"
 # problem type [regression, single_label_classification]
-problem_type="regression"
+problem_type="single_label_classification"
 num_labels=1
 [ "$problem_type" == "single_label_classification" ] && num_labels=5
+# model type [baseline, prototype]
+model_type="prototype"
+num_prototypes=3
+dist="scos"
 
 # data config
 kfold=1
@@ -17,9 +21,9 @@ json_root="data-json/icnale/trans_stt_whisperv2_large"
 
 # training config
 nj=4
-gpuid=2
-train_conf=conf/train_icnale.json
-exp_root=exp/icnale/wav2vec2-base/$problem_type/baseline
+gpuid=0
+train_conf=conf/train_icnale_prototype.json
+exp_root=exp/icnale/wav2vec2-base/$problem_type/${model_type}_${dist}
 dropout=0.2
 
 # eval config
@@ -59,11 +63,15 @@ if [ $stage -le 1 ]; then
     for score in $scores; do
         for fd in $folds; do
             CUDA_VISIBLE_DEVICES="$gpuid" \
-                python train.py --final-dropout $dropout \
+                python train.py \
+                    --final-dropout $dropout \
                     --train-conf $train_conf \
                     --model-path $model_path \
                     --problem-type $problem_type \
                     --num-labels $num_labels \
+                    --model-type $model_type \
+                    --num-prototypes $num_prototypes \
+                    --dist $dist \
                     --train-json $json_root/$score/$fd/train.json \
                     --valid-json $json_root/$score/$fd/valid.json \
                     --exp-dir $exp_root/$score/$fd \
@@ -77,6 +85,7 @@ if [ $stage -le 2 ]; then
         for fd in $folds; do
             CUDA_VISIBLE_DEVICES="$gpuid" \
                 python test.py \
+                    --model-type $model_type \
                     --model-path $exp_root/$score/$fd/best \
                     --test-json $json_root/$score/$fd/test.json \
                     --exp-dir $exp_root/$score/$fd \
