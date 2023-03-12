@@ -2,8 +2,6 @@
 # dependency: torch, torchaudio, transformers, datasets, librosa
 # stage
 stage=1
-# gpu
-gpuid=3
 
 # data config
 kfold=5
@@ -12,42 +10,31 @@ folds=`seq 1 $kfold`
 scores="content"
 test_book=1
 part=1
-trans_type=trans_stt_tov   # trans_stt_tov -> cls, trans_stt_tov_wod -> reg
-
-# wav2cec2 config
-model_path="facebook/wav2vec2-base"
-#local_path="exp/icnale/wav2vec2-base/regression/baseline/holistic/1/best"	# finetune
-# problem type [regression, single_label_classification]
-problem_type="single_label_classification"
-num_labels=8    # when regression set 1, else 8
-class_weight_alpha=0.0
-# model type [baseline, prototype]
-model_type="prototype"
-num_prototypes=3
+trans_type=0309_trans_stt_tov   # trans_stt_tov -> cls, trans_stt_tov_wod -> reg
 
 # training config
 nj=4
-train_conf=conf/train_teemi.json
-conf=$(basename -s .json $train_conf)
+gpuid=0
+train_conf=conf/train_teemi_prototype.json
 
 # eval config
-bins=""
+bins=""    # for cls
+#bins="1,2,2.5,3,3.5,4,4.5,5"  # for reg, no 1.5 score (pre-A-A1)
 
 # visualization config
 vi_labels="pre-A,A1,A1A2,A2,A2B1,B1,B1B2,B2"
-vi_bins=""
+vi_bins="" # for cls
+#vi_bins="2,2.5,3,3.5,4,4.5,5" # for reg, below A1(2) is pre-A
 
 . ./local/parse_options.sh
 . ./path.sh
 
 tsv_root=data-speaking/teemi-tb${test_book}p${part}/${trans_type}
 json_root=data-json/teemi-tb${test_book}p${part}/${trans_type}
-exp_root=exp/teemi-tb${test_book}p${part}/$trans_type/wav2vec2-base/$problem_type/${model_type}_sed
 
-if [ "$problem_type" == "regression" ]; then
-    bins="1,2,2.5,3,3.5,4,4.5,5"  # no 1.5 score (pre-A-A1)
-    vi_bins="2,2.5,3,3.5,4,4.5,5" # below A1(2) is pre-A
-fi
+exp_tag=$(basename -s .json $train_conf)
+exp_root=exp/teemi-tb${test_book}p${part}/$trans_type/wav2vec2-base/${exp_tag}_cos
+
 
 if [ $stage -le 0 ]; then
     for score in content pronunciation vocabulary; do
@@ -68,13 +55,9 @@ if [ $stage -le 1 ]; then
     for score in $scores; do
         for fd in $folds; do
             CUDA_VISIBLE_DEVICES="$gpuid" \
-                python train.py  --class-weight-alpha $class_weight_alpha \
+                python train.py  \
                     --train-conf $train_conf \
-                    --model-path $model_path \
-                    --problem-type $problem_type \
-                    --model-type $model_type \
-                    --num-prototypes $num_prototypes \
-                    --num-labels $num_labels \
+                    --bins "$bins" \
                     --train-json $json_root/$score/$fd/train.json \
                     --valid-json $json_root/$score/$fd/valid.json \
                     --exp-dir $exp_root/$score/$fd \
@@ -88,8 +71,8 @@ if [ $stage -le 2 ]; then
         for fd in $folds; do
             #[ ! -d $exp_root/$score/$fd/bins9 ] && mkdir -p $exp_root/$score/$fd/bins9
             CUDA_VISIBLE_DEVICES="$gpuid" \
-                python test.py --bins "$bins" \
-                    --model-type $model_type \
+                python test.py \
+                    --train-conf $exp_root/$score/$fd/train_conf.json \
                     --model-path $exp_root/$score/$fd/best \
                     --test-json $json_root/$score/$fd/test.json \
                     --exp-dir $exp_root/$score/$fd \
@@ -110,7 +93,7 @@ if [ $stage -le 4 ]; then
     # produce confusion matrix in $exp_root/score_name.png
     python local/visualization.py \
         --result_root $exp_root --scores "$scores" --folds "$folds" \
-       --bins "$vi_bins" --labels "$vi_labels"
+        --bins "$vi_bins" --labels "$vi_labels"
     python local/visualization.py --merge-speaker \
         --result_root $exp_root --scores "$scores" --folds "$folds" \
         --bins "$vi_bins" --labels "$vi_labels"

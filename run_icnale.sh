@@ -1,17 +1,6 @@
 #!/bin/bash
 # dependency: torch, torchaudio, transformers, datasets, librosa
 
-# wav2cec2 config
-model_path="facebook/wav2vec2-base"
-# problem type [regression, single_label_classification]
-problem_type="single_label_classification"
-num_labels=1
-[ "$problem_type" == "single_label_classification" ] && num_labels=5
-# model type [baseline, prototype]
-model_type="prototype"
-num_prototypes=3
-dist="scos"
-
 # data config
 kfold=1
 folds=`seq 1 $kfold`
@@ -22,16 +11,16 @@ json_root="data-json/icnale/trans_stt_whisperv2_large"
 # training config
 nj=4
 gpuid=0
-train_conf=conf/train_icnale_prototype.json
-exp_root=exp/icnale/wav2vec2-base/$problem_type/${model_type}_${dist}
-dropout=0.2
+train_conf=conf/train_icnale_prototypes.json
 
-# eval config
+# eval bins config
 bins=""
+#bins="1.5,2.5,3.5,4.5"  # for reg
 
-# visualization config
+# visualization bins config
 vi_labels="A2,B1_1,B1_2,B2,native"
 vi_bins=""
+#vi_bins="1.5,2.5,3.5,4.5"   # for reg
 
 # stage
 stage=1
@@ -39,10 +28,8 @@ stage=1
 . ./local/parse_options.sh
 . ./path.sh
 
-if [ "$problem_type" == "regression" ]; then
-    bins="1.5,2.5,3.5,4.5" 
-    vi_bins="1.5,2.5,3.5,4.5"
-fi
+exp_tag=$(basename -s .json $train_conf)
+exp_root=exp/icnale/wav2vec2-base/$exp_tag
 
 if [ $stage -le 0 ]; then
     for score in $scores; do
@@ -64,14 +51,8 @@ if [ $stage -le 1 ]; then
         for fd in $folds; do
             CUDA_VISIBLE_DEVICES="$gpuid" \
                 python train.py \
-                    --final-dropout $dropout \
                     --train-conf $train_conf \
-                    --model-path $model_path \
-                    --problem-type $problem_type \
-                    --num-labels $num_labels \
-                    --model-type $model_type \
-                    --num-prototypes $num_prototypes \
-                    --dist $dist \
+                    --bins "$bins" \
                     --train-json $json_root/$score/$fd/train.json \
                     --valid-json $json_root/$score/$fd/valid.json \
                     --exp-dir $exp_root/$score/$fd \
@@ -85,7 +66,7 @@ if [ $stage -le 2 ]; then
         for fd in $folds; do
             CUDA_VISIBLE_DEVICES="$gpuid" \
                 python test.py \
-                    --model-type $model_type \
+                    --train-conf $exp_root/$score/$fd/train_conf.json \
                     --model-path $exp_root/$score/$fd/best \
                     --test-json $json_root/$score/$fd/test.json \
                     --exp-dir $exp_root/$score/$fd \

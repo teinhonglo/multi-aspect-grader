@@ -1,9 +1,9 @@
-{
+[ {
     "per_device_train_batch_size": 4,
     "gradient_accumulation_steps": 2,
     "per_device_eval_batch_size": 8,
     "evaluation_strategy": "steps",
-    "num_train_epochs": 15,
+    "num_train_epochs": 1,
     "save_steps": 100,
     "eval_steps": 100,
     "logging_steps": 50,
@@ -11,6 +11,14 @@
     "weight_decay": 0,
     "warmup_steps": 0,
     "save_total_limit": 1,
-    "metric_for_best_model": "loss",
-    "greater_is_better": false
-}
+    "gradient_checkpointing": true
+  },
+  {
+    "model_path" : "facebook/wav2vec2-base",
+    "problem_type": "regression",
+    "num_labels": 1,
+    "model_type": "baseline",
+    "class_weight_alpha": 0.0,
+    "final_dropout": 0.2,
+  }
+]

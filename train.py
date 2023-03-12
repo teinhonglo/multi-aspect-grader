@@ -11,7 +11,7 @@ from datasets import Dataset, Audio, load_from_disk
 import numpy as np
 
 # local import
-from utils import make_dataset, DataCollatorCTCWithPadding, cal_class_weight, load_from_json
+from utils import make_dataset, DataCollatorCTCWithPadding, cal_class_weight, load_from_json, save_to_json
 from metrics_np import compute_metrics
 from model import Wav2vec2GraderModel, Wav2vec2GraderPrototypeModel
 
@@ -19,13 +19,26 @@ def main(args):
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    # load train_args, model_args
+    training_args = load_from_json(args.train_conf)
+    train_args, model_args = training_args[0], training_args[1]
+    # save train_args, model_args to exp_dir
+    train_conf_path = os.path.join(args.exp_dir, 'train_conf.json')
+    if not os.path.exists(args.exp_dir):
+        os.makedirs(args.exp_dir)
+    save_to_json(training_args, train_conf_path)
+    # show the model_args
+    print("[NOTE] Model args ...")
+    print(json.dumps(model_args, indent=4))
+
+    # load wav2vec2 config
     config = AutoConfig.from_pretrained(
-        args.model_path,
-        num_labels=args.num_labels,
-        problem_type=args.problem_type,
-        final_dropout=args.final_dropout,
+        model_args["model_path"],
+        num_labels=model_args["num_labels"],
+        problem_type=model_args["problem_type"],
+        final_dropout=model_args["final_dropout"],
     )
-    feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(args.model_path)
+    feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(model_args["model_path"],)
 
     # data preprocess
     def preprocess_function(batch):
@@ -57,38 +70,37 @@ def main(args):
 
     # data collator
     data_collator = DataCollatorCTCWithPadding(
-        feature_extractor=feature_extractor, problem_type=args.problem_type, padding=True
+        feature_extractor=feature_extractor, problem_type=model_args["problem_type"], padding=True
     )
 
     # NOTE: class_weight cal from trainset
-    if args.class_weight_alpha != 0:
-        assert args.problem_type == "single_label_classification"
-        print("[INFO] Use class weight alpha {} ...".format(args.class_weight_alpha))
-        class_weight = cal_class_weight(tr_dataset['labels'], args.num_labels, \
-            alpha=args.class_weight_alpha).to(device)
+    if model_args["class_weight_alpha"] != 0:
+        assert model_args["problem_type"] == "single_label_classification"
+        print("[INFO] Use class weight alpha {} ...".format(model_args["class_weight_alpha"]))
+        class_weight = cal_class_weight(tr_dataset['labels'], model_args["num_labels"], \
+            alpha=model_args["class_weight_alpha"]).to(device)
     else:
         print("[INFO] No class weight is provide ...")
         class_weight = None
 
     # NOTE: define model
-    if args.local_path:
-        print("[INFO] Load pretrained {} model from {} ...".format(args.model_type, args.local_path))
-        local_model = Wav2vec2GraderModel.from_pretrained(args.local_path)
-        if args.model_type == "prototype":
-            model = Wav2vec2GraderPrototypeModel(config=config, class_weight=class_weight, num_prototypes=args.num_prototypes, dist=args.dist)
+    if "local_path" in model_args:
+        print("[INFO] Load pretrained {} model from {} ...".format(model_args["model_type"], model_args["local_path"],))
+        local_model = Wav2vec2GraderModel.from_pretrained(model_args["local_path"],)
+        if model_args["model_type"] == "prototype":
+            model = Wav2vec2GraderPrototypeModel(config=config, class_weight=class_weight, num_prototypes=model_args["num_prototypes"], dist=model_args["dist"])
         else:
             model = Wav2vec2GraderModel(config=config, class_weight=class_weight)
         model.load_pretrained_wav2vec2(local_model.wav2vec2.state_dict())
     else:
-        print("[INFO] Train a {} model from {} ...".format(args.model_type, args.model_path))
-        if args.model_type == "prototype":
-            model = Wav2vec2GraderPrototypeModel.from_pretrained(args.model_path, config=config, class_weight=class_weight, num_prototypes=args.num_prototypes, dist=args.dist)
-            if args.init_prototypes:
+        print("[INFO] Train a {} model from {} ...".format(model_args["model_type"], model_args["model_path"]))
+        if model_args["model_type"] == "prototype":
+            model = Wav2vec2GraderPrototypeModel.from_pretrained(model_args["model_path"], config=config, class_weight=class_weight, num_prototypes=model_args["num_prototypes"], dist=model_args["dist"])
+            if model_args["init_prototypes"]:
                 model.init_prototypes(tr_dataset, path=train_dataset_path)
         else:
-            model = Wav2vec2GraderModel.from_pretrained(args.model_path, config=config, class_weight=class_weight)
+            model = Wav2vec2GraderModel.from_pretrained(model_args["model_path"], config=config, class_weight=class_weight)
         model.freeze_feature_extractor()
-    #model.gradient_checkpointing_enable()
 
     # NOTE: define metric
     def calculate_metrics(pred):
@@ -97,7 +109,7 @@ def main(args):
         # NOTE: teemi: 0-8 to 1-9
         preds = pred.predictions
         preds = np.argmax(preds, axis=1) + 1 \
-            if args.problem_type == "single_label_classification" else preds
+            if model_args["problem_type"] == "single_label_classification" else preds
         # labels
         labels = pred.label_ids
 
@@ -114,7 +126,7 @@ def main(args):
         return total_losses
 
     # NOTE: define training args
-    train_args = load_from_json(args.train_conf)
+    #train_args = load_from_json(args.train_conf)
     training_args = TrainingArguments(
         output_dir=args.exp_dir,
         group_by_length=True,
@@ -149,17 +161,7 @@ if __name__ == "__main__":
     parser.add_argument('--train-json', type=str, help="kaldi-format data", default="/share/nas167/fuann/asr/gop_speechocean762/s5/data/train")
     parser.add_argument('--valid-json', type=str, help="kaldi-format data", default="/share/nas167/fuann/asr/gop_speechocean762/s5/data/test")
     parser.add_argument('--train-conf', type=str)
-    parser.add_argument('--problem-type', default="regression", choices=['regression', 'single_label_classification'])
-    parser.add_argument('--model-type', default="baseline", choices=['baseline', 'prototype'])
-    parser.add_argument('--num-prototypes', type=int, default=3, help="use when --model-type prototype")
-    parser.add_argument('--init-prototypes', action="store_true", default=False)
-    parser.add_argument('--dist', type=str, default="sed", help="use when --model-type prototype")
-    parser.add_argument('--class-weight-alpha', type=float, default=0)
-    parser.add_argument('--final-dropout', type=float, default=0)
     parser.add_argument('--bins', default=None, help="for calculating accuracy-related metrics, it should be [1, 1.5, 2, 2.5, ...]")
-    parser.add_argument('--num-labels', type=int, default=1)
-    parser.add_argument('--model-path', type=str, default="facebook/wav2vec2-large-xlsr-53")
-    parser.add_argument('--local-path', type=str, default=None)
     parser.add_argument("--resume", action='store_true', default=False)
     parser.add_argument('--exp-dir', type=str, default="exp-finetune/facebook/wav2vec2-large-xlsr-53")
     parser.add_argument('--nj', type=int, default=4)

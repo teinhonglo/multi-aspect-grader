@@ -9,8 +9,13 @@ from transformers import Wav2Vec2FeatureExtractor
 from dataclasses import dataclass, field
 
 def load_from_json(data_json):
-    with open(data_json, newline='') as jsonfile:
-        return json.load(jsonfile)
+    with open(data_json) as jsonfile:
+        x = json.load(jsonfile)
+        return x
+
+def save_to_json(data_dict, path):
+    with open(path, "w") as write_file:
+        json.dump(data_dict, write_file, indent=4)
 
 def cal_class_weight(labels, n_classes, alpha=1.0, epsilon=1e-5):
     # input: list
@@ -33,7 +38,7 @@ def cal_class_weight(labels, n_classes, alpha=1.0, epsilon=1e-5):
     class_ratio = class_ratio / np.sum(class_ratio)
     class_weight = np.power(class_ratio, alpha) / np.sum(
         np.power(class_ratio, alpha)) / (class_ratio + epsilon)
-    ''' 
+    '''
 
     return torch.Tensor(class_weight)
 

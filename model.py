@@ -46,6 +46,7 @@ class SpeechClassifierOutput(ModelOutput):
     logits: torch.FloatTensor = None
     hidden_states: Optional[Tuple[torch.FloatTensor]] = None
     attentions: Optional[Tuple[torch.FloatTensor]] = None
+    embeds: Optional[torch.FloatTensor] = None
 
 class Wav2vec2GraderModel(Wav2Vec2PreTrainedModel):
 
@@ -126,7 +127,7 @@ class Wav2vec2GraderModel(Wav2Vec2PreTrainedModel):
             attentions=outputs.attentions,
         )
 
-class Wav2vec2GraderPrototypeModel(Wav2vec2GraderModel):
+class Wav2vec2GraderPrototypeModel(Wav2Vec2PreTrainedModel):
 
     def __init__(self, config, class_weight=None, num_prototypes=3, dist="sed"):
         super(Wav2vec2GraderPrototypeModel, self).__init__(config)
@@ -143,14 +144,26 @@ class Wav2vec2GraderPrototypeModel(Wav2vec2GraderModel):
         if self.dist == "scos":
             self.w = nn.Parameter(torch.tensor(10.0))
             self.b = nn.Parameter(torch.tensor(-5.0))
+        self.final_dropout = nn.Dropout(config.final_dropout)
+        
 
         self.init_weights()
     
-    def init_prototypes(self, tr_dataset, path, nj=8, device="cuda", eps=1e-6) -> None:
+    def load_pretrained_wav2vec2(self, state_dict):
+        self.wav2vec2.load_state_dict(state_dict)
+        self.wav2vec2.feature_extractor._freeze_parameters()
+    
+    def freeze_feature_extractor(self):
+        self.wav2vec2.feature_extractor._freeze_parameters()
+
+    def get_prototype(self):
+        return self.prototype.weight.reshape(self.num_labels, self.num_prototypes, -1).detach().cpu()
+
+    def init_prototypes(self, tr_dataset, path, device="cuda", eps=1e-6) -> None:
         # init with wav2vec2
         print("[INFO] Initialize prototypes with wav2vec2 ...")
 
-        embed_path = path + "/prototype_initials.pt"
+        embed_path = path + "/prototype_initials_var0.1.pt"
         if not os.path.exists(embed_path):
 
             prototype_initials = torch.full((self.num_labels, self.wav2vec2.config.hidden_size), fill_value=eps)
@@ -165,7 +178,7 @@ class Wav2vec2GraderPrototypeModel(Wav2vec2GraderModel):
                     # [1, 768] -> [768]
                     embeddings = torch.mean(hidden_states, dim=1).squeeze(0)
 
-                lv = batch['labels']-1
+                lv = labels-1
                 prototype_initials[lv] += embeddings.detach().cpu()
             
             # compute all embeddings
@@ -175,14 +188,14 @@ class Wav2vec2GraderPrototypeModel(Wav2vec2GraderModel):
             torch.cuda.empty_cache()
             self.wav2vec2.train()
 
-            # take avg of same level embeddings
-            tr_labels = torch.as_tensor(tr_dataset['labels'])
+            # avg same level embeddings
+            tr_labels = torch.as_tensor(tr_dataset['labels'])-1
             for lv in range(self.num_labels):
                 lv_num = torch.count_nonzero((tr_labels == lv)) + eps
                 prototype_initials[lv] = prototype_initials[lv] / lv_num
                 
             # add noise
-            var = torch.var(prototype_initials).item() * 0.05 # Add Gaussian noize with 5% variance of the original tensor
+            var = torch.var(prototype_initials).item() * 0.1 # Add Gaussian noize with 5% variance of the original tensor
             prototype_initials = prototype_initials.repeat(self.num_prototypes, 1) # repeat num_prototypes in dim 1
             noise = (var ** 0.5) * torch.randn(prototype_initials.size())
             prototype_initials = prototype_initials + noise  # Add Gaussian noize
@@ -195,7 +208,7 @@ class Wav2vec2GraderPrototypeModel(Wav2vec2GraderModel):
             prototype_initials = torch.load(embed_path)
 
         self.prototype.weight = nn.Parameter(prototype_initials)
-        nn.init.orthogonal_(self.prototype.weight)  # Make prototype vectors orthogonal
+        #nn.init.orthogonal_(self.prototype.weight)  # Make prototype vectors orthogonal
 
     
     def negative_sed(self, a, b):
@@ -258,6 +271,7 @@ class Wav2vec2GraderPrototypeModel(Wav2vec2GraderModel):
             return_dict=return_dict,
         )
         hidden_states = outputs[0]
+        hidden_states = self.final_dropout(hidden_states)
         hidden_states = torch.mean(hidden_states, dim=1)
         # calculate distance
         if self.dist == "sed":
@@ -302,4 +316,5 @@ class Wav2vec2GraderPrototypeModel(Wav2vec2GraderModel):
             logits=logits,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
+            embeds=hidden_states
         )
