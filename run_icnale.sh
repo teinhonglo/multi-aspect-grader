@@ -10,8 +10,9 @@ json_root="data-json/icnale/trans_stt_whisperv2_large"
 
 # training config
 nj=4
-gpuid=0
-train_conf=conf/train_icnale_prototypes.json
+gpuid=2
+train_conf=conf/train_icnale_baseline_cls_data2vec.json
+suffix=_drop0.0
 
 # eval bins config
 bins=""
@@ -28,8 +29,8 @@ stage=1
 . ./local/parse_options.sh
 . ./path.sh
 
-exp_tag=$(basename -s .json $train_conf)
-exp_root=exp/icnale/wav2vec2-base/$exp_tag
+conf_tag=$(basename -s .json $train_conf)
+exp_root=exp/icnale/${conf_tag}${suffix}
 
 if [ $stage -le 0 ]; then
     for score in $scores; do
@@ -66,8 +67,7 @@ if [ $stage -le 2 ]; then
         for fd in $folds; do
             CUDA_VISIBLE_DEVICES="$gpuid" \
                 python test.py \
-                    --train-conf $exp_root/$score/$fd/train_conf.json \
-                    --model-path $exp_root/$score/$fd/best \
+                    --model-path $exp_root/$score/$fd \
                     --test-json $json_root/$score/$fd/test.json \
                     --exp-dir $exp_root/$score/$fd \
                     --nj $nj || exit 1

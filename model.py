@@ -3,16 +3,12 @@ import torch.nn as nn
 from dataclasses import dataclass
 from typing import Optional, Tuple
 from transformers.file_utils import ModelOutput
-#from transformers import Wav2Vec2Model, PretrainedModel
-from transformers.models.wav2vec2.modeling_wav2vec2 import (
-    Wav2Vec2PreTrainedModel,
-    Wav2Vec2Model
-)
+from transformers import AutoModel, AutoConfig
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 
 import os
 from datasets import load_from_disk
-        
+
 class MeanPooling(nn.Module):
     def __init__(self):
         super(MeanPooling, self).__init__()
@@ -48,29 +44,47 @@ class SpeechClassifierOutput(ModelOutput):
     attentions: Optional[Tuple[torch.FloatTensor]] = None
     embeds: Optional[torch.FloatTensor] = None
 
-class Wav2vec2GraderModel(Wav2Vec2PreTrainedModel):
+class AutoGraderModel(nn.Module):
 
-    def __init__(self, config, class_weight=None):
-        super(Wav2vec2GraderModel, self).__init__(config)
-        self.config = config
-        self.num_labels = config.num_labels
+    def __init__(self, model_args, class_weight=None, config=None, pretrained=False):
+        super(AutoGraderModel, self).__init__()
+
+        # config
+        if config is None:
+            self.config = AutoConfig.from_pretrained(
+                model_args["model_path"],
+                num_labels=model_args["num_labels"],
+                problem_type=model_args["problem_type"],
+                final_dropout=model_args["final_dropout"]
+            )
+        else:
+            self.config = config
+
+        # model
+        if pretrained:
+            self.model = AutoModel.from_pretrained(model_args["model_path"], config=self.config)
+        else:
+            self.model = AutoModel.from_config(self.config)
+
+        # prediction head
+        self.prediction_head = PredictionHead(self.config)
+
+        # other
+        self.num_labels = self.config.num_labels
         self.class_weight = class_weight
+        self.model.gradient_checkpointing_enable()
 
-        self.wav2vec2 = Wav2Vec2Model(config)
-        self.prediction_head = PredictionHead(config)
-
-        self.init_weights()
 
     def freeze(self, module):
         for parameter in module.parameters():
             parameter.requires_grad = False
 
     def freeze_feature_extractor(self):
-        self.wav2vec2.feature_extractor._freeze_parameters()
+        self.model.feature_extractor._freeze_parameters()
 
     def load_pretrained_wav2vec2(self, state_dict):
-        self.wav2vec2.load_state_dict(state_dict)
-        self.wav2vec2.feature_extractor._freeze_parameters()
+        self.model.load_state_dict(state_dict)
+        self.model.feature_extractor._freeze_parameters()
 
     def forward(self,
         input_values,
@@ -80,7 +94,7 @@ class Wav2vec2GraderModel(Wav2Vec2PreTrainedModel):
         return_dict=None,
         labels=None,
     ):
-        outputs = self.wav2vec2(
+        outputs = self.model(
             input_values,
             attention_mask=attention_mask,
             output_attentions=output_attentions,
@@ -127,34 +141,48 @@ class Wav2vec2GraderModel(Wav2Vec2PreTrainedModel):
             attentions=outputs.attentions,
         )
 
-class Wav2vec2GraderPrototypeModel(Wav2Vec2PreTrainedModel):
+class AutoGraderPrototypeModel(nn.Module):
 
-    def __init__(self, config, class_weight=None, num_prototypes=3, dist="sed"):
-        super(Wav2vec2GraderPrototypeModel, self).__init__(config)
-        self.config = config
-        self.num_labels = config.num_labels
-        self.class_weight = class_weight
+    def __init__(self, model_args, class_weight=None, config=None, pretrained=False):
+        super(AutoGraderPrototypeModel, self).__init__()
 
-        self.wav2vec2 = Wav2Vec2Model(config)
+        # config
+        if config is None:
+            self.config = AutoConfig.from_pretrained(
+                model_args["model_path"],
+                num_labels=model_args["num_labels"],
+                problem_type=model_args["problem_type"],
+                final_dropout=model_args["final_dropout"]
+            )
+        else:
+            self.config = config
+
+        # model
+        if pretrained:
+            self.model = AutoModel.from_pretrained(model_args["model_path"], config=self.config)
+        else:
+            self.model = AutoModel.from_config(self.config)
 
         # NOTE: prototype-related
-        self.num_prototypes = num_prototypes
-        self.prototype = nn.Embedding(self.num_labels * self.num_prototypes, self.wav2vec2.config.hidden_size)
-        self.dist = dist
+        self.num_prototypes = model_args["num_prototypes"]
+        self.prototype = nn.Embedding(model_args["num_labels"] * self.num_prototypes, self.model.config.hidden_size)
+        self.dist = model_args["dist"]
         if self.dist == "scos":
             self.w = nn.Parameter(torch.tensor(10.0))
             self.b = nn.Parameter(torch.tensor(-5.0))
-        self.final_dropout = nn.Dropout(config.final_dropout)
-        
+        self.final_dropout = nn.Dropout(self.config.final_dropout)
 
-        self.init_weights()
+        # other
+        self.num_labels = self.config.num_labels
+        self.class_weight = class_weight
+        self.model.gradient_checkpointing_enable()
     
     def load_pretrained_wav2vec2(self, state_dict):
-        self.wav2vec2.load_state_dict(state_dict)
-        self.wav2vec2.feature_extractor._freeze_parameters()
+        self.model.load_state_dict(state_dict)
+        self.model.feature_extractor._freeze_parameters()
     
     def freeze_feature_extractor(self):
-        self.wav2vec2.feature_extractor._freeze_parameters()
+        self.model.feature_extractor._freeze_parameters()
 
     def get_prototype(self):
         return self.prototype.weight.reshape(self.num_labels, self.num_prototypes, -1).detach().cpu()
@@ -163,17 +191,17 @@ class Wav2vec2GraderPrototypeModel(Wav2Vec2PreTrainedModel):
         # init with wav2vec2
         print("[INFO] Initialize prototypes with wav2vec2 ...")
 
-        embed_path = path + "/prototype_initials_var0.1.pt"
+        embed_path = path + "/prototype_initials_var0.05.pt"
         if not os.path.exists(embed_path):
 
-            prototype_initials = torch.full((self.num_labels, self.wav2vec2.config.hidden_size), fill_value=eps)
+            prototype_initials = torch.full((self.num_labels, self.model.config.hidden_size), fill_value=eps)
             
             def compute_embeddings(batch):
                 input_values = torch.as_tensor(batch["input_values"], device=device).unsqueeze(0)
                 labels = torch.as_tensor(batch["labels"], dtype=torch.long)
 
                 with torch.no_grad():
-                    outputs = self.wav2vec2(input_values)
+                    outputs = self.model(input_values)
                     hidden_states = outputs[0]
                     # [1, 768] -> [768]
                     embeddings = torch.mean(hidden_states, dim=1).squeeze(0)
@@ -182,11 +210,11 @@ class Wav2vec2GraderPrototypeModel(Wav2Vec2PreTrainedModel):
                 prototype_initials[lv] += embeddings.detach().cpu()
             
             # compute all embeddings
-            self.wav2vec2.eval()
-            self.wav2vec2.to(device)
+            self.model.eval()
+            self.model.to(device)
             tr_dataset = tr_dataset.map(compute_embeddings)
             torch.cuda.empty_cache()
-            self.wav2vec2.train()
+            self.model.train()
 
             # avg same level embeddings
             tr_labels = torch.as_tensor(tr_dataset['labels'])-1
@@ -195,7 +223,7 @@ class Wav2vec2GraderPrototypeModel(Wav2Vec2PreTrainedModel):
                 prototype_initials[lv] = prototype_initials[lv] / lv_num
                 
             # add noise
-            var = torch.var(prototype_initials).item() * 0.1 # Add Gaussian noize with 5% variance of the original tensor
+            var = torch.var(prototype_initials).item() * 0.05 # Add Gaussian noize with 5% variance of the original tensor
             prototype_initials = prototype_initials.repeat(self.num_prototypes, 1) # repeat num_prototypes in dim 1
             noise = (var ** 0.5) * torch.randn(prototype_initials.size())
             prototype_initials = prototype_initials + noise  # Add Gaussian noize
@@ -263,7 +291,7 @@ class Wav2vec2GraderPrototypeModel(Wav2Vec2PreTrainedModel):
         return_dict=None,
         labels=None,
     ):
-        outputs = self.wav2vec2(
+        outputs = self.model(
             input_values,
             attention_mask=attention_mask,
             output_attentions=output_attentions,

@@ -10,21 +10,22 @@ folds=`seq 1 $kfold`
 scores="content"
 test_book=1
 part=1
-trans_type=0309_trans_stt_tov   # trans_stt_tov -> cls, trans_stt_tov_wod -> reg
+trans_type=0317_trans_stt_tov   # trans_stt_tov -> cls, trans_stt_tov_wod -> reg
 
 # training config
 nj=4
-gpuid=0
-train_conf=conf/train_teemi_prototype.json
+gpuid=3
+train_conf=conf/train_teemi_prototype_data2vec.json
+suffix=_cos_clsw0.95
 
 # eval config
 bins=""    # for cls
 #bins="1,2,2.5,3,3.5,4,4.5,5"  # for reg, no 1.5 score (pre-A-A1)
 
 # visualization config
-vi_labels="pre-A,A1,A1A2,A2,A2B1,B1,B1B2,B2"
 vi_bins="" # for cls
 #vi_bins="2,2.5,3,3.5,4,4.5,5" # for reg, below A1(2) is pre-A
+vi_labels="pre-A,A1,A1A2,A2,A2B1,B1,B1B2,B2"
 
 . ./local/parse_options.sh
 . ./path.sh
@@ -32,9 +33,8 @@ vi_bins="" # for cls
 tsv_root=data-speaking/teemi-tb${test_book}p${part}/${trans_type}
 json_root=data-json/teemi-tb${test_book}p${part}/${trans_type}
 
-exp_tag=$(basename -s .json $train_conf)
-exp_root=exp/teemi-tb${test_book}p${part}/$trans_type/wav2vec2-base/${exp_tag}_cos
-
+conf_tag=$(basename -s .json $train_conf)
+exp_root=exp/teemi-tb${test_book}p${part}/$trans_type/${conf_tag}${suffix}
 
 if [ $stage -le 0 ]; then
     for score in content pronunciation vocabulary; do
@@ -70,10 +70,10 @@ if [ $stage -le 2 ]; then
     for score in $scores; do
         for fd in $folds; do
             #[ ! -d $exp_root/$score/$fd/bins9 ] && mkdir -p $exp_root/$score/$fd/bins9
+            #--train-conf $exp_root/$score/$fd/train_conf.json \
             CUDA_VISIBLE_DEVICES="$gpuid" \
                 python test.py \
-                    --train-conf $exp_root/$score/$fd/train_conf.json \
-                    --model-path $exp_root/$score/$fd/best \
+                    --model-path $exp_root/$score/$fd \
                     --test-json $json_root/$score/$fd/test.json \
                     --exp-dir $exp_root/$score/$fd \
                     --nj $nj || exit 1

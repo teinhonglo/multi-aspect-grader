@@ -1,10 +1,11 @@
 #!/bin/python
 import os
+import sys
 import json
 import argparse
 import torch
 import torchaudio
-from transformers import AutoConfig, Wav2Vec2Processor, Wav2Vec2FeatureExtractor
+from transformers import AutoConfig, AutoFeatureExtractor
 from transformers import TrainingArguments, Trainer
 from datasets import Dataset, Audio, load_from_disk
 
@@ -13,7 +14,7 @@ import numpy as np
 # local import
 from utils import make_dataset, DataCollatorCTCWithPadding, cal_class_weight, load_from_json, save_to_json
 from metrics_np import compute_metrics
-from model import Wav2vec2GraderModel, Wav2vec2GraderPrototypeModel
+from model import AutoGraderModel, AutoGraderPrototypeModel
 
 def main(args):
 
@@ -37,8 +38,9 @@ def main(args):
         num_labels=model_args["num_labels"],
         problem_type=model_args["problem_type"],
         final_dropout=model_args["final_dropout"],
+        gradient_checkpointing=True
     )
-    feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(model_args["model_path"],)
+    feature_extractor = AutoFeatureExtractor.from_pretrained(model_args["model_path"])
 
     # data preprocess
     def preprocess_function(batch):
@@ -86,21 +88,22 @@ def main(args):
     # NOTE: define model
     if "local_path" in model_args:
         print("[INFO] Load pretrained {} model from {} ...".format(model_args["model_type"], model_args["local_path"],))
-        local_model = Wav2vec2GraderModel.from_pretrained(model_args["local_path"],)
+        local_model = AutoGraderModel.from_pretrained(model_args["local_path"])
         if model_args["model_type"] == "prototype":
-            model = Wav2vec2GraderPrototypeModel(config=config, class_weight=class_weight, num_prototypes=model_args["num_prototypes"], dist=model_args["dist"])
+            model = AutoGraderPrototypeModel(model_args, class_weight=class_weight, pretrained=True)
         else:
-            model = Wav2vec2GraderModel(config=config, class_weight=class_weight)
+            model = AutoGraderModel(model_args, class_weight=class_weight, pretrained=True)
         model.load_pretrained_wav2vec2(local_model.wav2vec2.state_dict())
     else:
         print("[INFO] Train a {} model from {} ...".format(model_args["model_type"], model_args["model_path"]))
         if model_args["model_type"] == "prototype":
-            model = Wav2vec2GraderPrototypeModel.from_pretrained(model_args["model_path"], config=config, class_weight=class_weight, num_prototypes=model_args["num_prototypes"], dist=model_args["dist"])
+            model = AutoGraderPrototypeModel(model_args, class_weight=class_weight, pretrained=True)
             if model_args["init_prototypes"]:
                 model.init_prototypes(tr_dataset, path=train_dataset_path)
         else:
-            model = Wav2vec2GraderModel.from_pretrained(model_args["model_path"], config=config, class_weight=class_weight)
+            model = AutoGraderModel(model_args, class_weight=class_weight, pretrained=True)
         model.freeze_feature_extractor()
+    torch.save(model.config, args.exp_dir + '/config.pth')
 
     # NOTE: define metric
     def calculate_metrics(pred):

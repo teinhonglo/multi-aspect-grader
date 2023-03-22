@@ -4,7 +4,7 @@ import json
 import argparse
 import torch
 import torchaudio
-from transformers import AutoConfig, Wav2Vec2Processor, Wav2Vec2FeatureExtractor
+from transformers import AutoConfig, AutoFeatureExtractor
 from transformers import TrainingArguments, Trainer
 from datasets import Dataset, Audio, load_metric, load_from_disk
 
@@ -17,7 +17,7 @@ from collections import defaultdict
 from utils import make_dataset, load_from_json
 #from metrics_np import compute_mse, _accuracy_within_margin
 from metrics_np import compute_metrics
-from model import Wav2vec2GraderModel, Wav2vec2GraderPrototypeModel
+from model import AutoGraderModel, AutoGraderPrototypeModel
 
 def embed_json(results, json_path):
     embed_dict = defaultdict(dict)
@@ -46,25 +46,30 @@ def proto_json(prototype, json_path):
         for j in range(num_prototypes):
             name = str(i) + "_" + str(j)
             proto_dict[name] = prototype[i][j].tolist()
-    
+
     with open(json_path, 'w') as jf:
         json.dump(proto_dict, jf, indent=4)
 
 def main(args):
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    train_conf_path = os.path.join(args.model_path, "train_conf.json")
+    config_path = os.path.join(args.model_path, "config.pth")
+    model_path = os.path.join(args.model_path, "checkpoint-4800")
 
     # load train_args, model_args
-    train_args, model_args = load_from_json(args.train_conf)
+    train_args, model_args = load_from_json(train_conf_path)
 
-    config = AutoConfig.from_pretrained(args.model_path)
-    feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(args.model_path)
+    config = torch.load(config_path)
+    feature_extractor = AutoFeatureExtractor.from_pretrained(model_path)
     if model_args["model_type"] == 'prototype':
-        model = Wav2vec2GraderPrototypeModel.from_pretrained(args.model_path, num_prototypes=model_args["num_prototypes"], dist=model_args["dist"]).to(device)
+        model = AutoGraderPrototypeModel(model_args, config=config).to(device)
         # num_labels, num_prototypes, dim
         prototype = model.get_prototype()
     else:
-        model = Wav2vec2GraderModel.from_pretrained(args.model_path).to(device)
+        model = AutoGraderModel(model_args, config=config).to(device)
+    model.load_state_dict(torch.load(model_path+"/pytorch_model.bin", map_location=device))
+    model.eval()
 
     # loading test set
     def preprocess_function(batch):

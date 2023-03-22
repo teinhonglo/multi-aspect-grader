@@ -11,11 +11,12 @@
     "weight_decay": 0,
     "warmup_steps": 0,
     "save_total_limit": 1,
-    "gradient_checkpointing": true
+    "metric_for_best_model": "eval_pearson",
+    "greater_is_better": true
   },
   {
     "model_path": "facebook/wav2vec2-base",
-    "local_path": "exp/icnale/wav2vec2-base/regression/baseline/holistic/1/best",
+    "local_path": "exp/icnale/wav2vec2-base/single_label_classification/baseline/holistic/1/best",
     "problem_type": "regression",
     "num_labels": 1,
     "model_type": "baseline",

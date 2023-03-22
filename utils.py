@@ -20,7 +20,8 @@ def save_to_json(data_dict, path):
 def cal_class_weight(labels, n_classes, alpha=1.0, epsilon=1e-5):
     # input: list
     # output: 1-d tensor
-    
+
+    # normal re-weighting
     labels = np.array(labels)
     n_samples = len(labels)
     n_samples_each = np.zeros(n_classes)
@@ -30,7 +31,7 @@ def cal_class_weight(labels, n_classes, alpha=1.0, epsilon=1e-5):
     #class_weight = np.power(n_samples, alpha) / n_classes * np.power(n_samples_each, alpha)
     class_weight = np.power(n_samples, alpha) / np.power(n_samples_each, alpha)
     class_weight[np.isinf(class_weight)] = 0
-    
+
     '''
     # cefr-sp
     labels = np.array(labels)

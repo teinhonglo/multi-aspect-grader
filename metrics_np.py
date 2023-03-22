@@ -11,6 +11,8 @@ def compute_metrics(total_losses, all_score_predictions, all_score_targets, bins
     total_losses['rmse'] = compute_rmse(all_score_predictions, all_score_targets)
     total_losses['mcrmse'] = compute_mcrmse(all_score_predictions, all_score_targets)
     total_losses['pearson'] = stats.pearsonr(all_score_predictions, all_score_targets)[0]
+    if np.isnan(total_losses['pearson']):
+        total_losses['pearson'] = 0.0
     total_losses['within_0.5'] = _accuracy_within_margin(all_score_predictions, all_score_targets, 0.5)
     total_losses['within_1.0'] = _accuracy_within_margin(all_score_predictions, all_score_targets, 1)
     total_losses['mcwithin_0.5'] = compute_within_acc(all_score_predictions, all_score_targets, 0.5)

@@ -11,7 +11,9 @@
     "weight_decay": 0,
     "warmup_steps": 0,
     "save_total_limit": 1,
-    "gradient_checkpointing": true
+    "gradient_checkpointing": true,
+    "metric_for_best_model": "eval_mcwithin_0.5",
+    "greater_is_better": true
   },
   {
     "model_path" : "facebook/wav2vec2-base",
