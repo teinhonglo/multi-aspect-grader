@@ -11,7 +11,7 @@ json_root="data-json/icnale/trans_stt_whisperv2_large"
 # training config
 nj=4
 gpuid=2
-train_conf=conf/train_icnale_baseline_cls.json
+train_conf=conf/train_icnale_baseline_cls_wav2vec2.json
 suffix=
 
 # eval bins config
