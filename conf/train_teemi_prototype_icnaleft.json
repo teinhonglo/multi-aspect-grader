@@ -12,15 +12,19 @@
     "warmup_steps": 0,
     "save_total_limit": 1,
     "gradient_checkpointing": true,
-    "metric_for_best_model": "eval_mcwithin_0.5",
+    "metric_for_best_model": "eval_pearson",
     "greater_is_better": true
   },
   {
-    "model_path" : "facebook/wav2vec2-base",
+    "model_path": "facebook/wav2vec2-base",
+    "local_path": "exp/icnale/wav2vec2-base/single_label_classification/prototype_sed/holistic/1/best",
     "problem_type": "single_label_classification",
     "num_labels": 8,
-    "model_type": "baseline",
-    "class_weight_alpha": 1.0,
+    "model_type": "prototype",
+    "dist": "sed",
+    "num_prototypes": 3,
+    "init_prototypes": false,
+    "class_weight_alpha": 0.0,
     "final_dropout": 0.0
   }
 ]

@@ -15,7 +15,6 @@ from collections import defaultdict
 
 # local import
 from utils import make_dataset, load_from_json
-#from metrics_np import compute_mse, _accuracy_within_margin
 from metrics_np import compute_metrics
 from model import AutoGraderModel, AutoGraderPrototypeModel
 
@@ -55,7 +54,7 @@ def main(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     train_conf_path = os.path.join(args.model_path, "train_conf.json")
     config_path = os.path.join(args.model_path, "config.pth")
-    model_path = os.path.join(args.model_path, "checkpoint-4800")
+    model_path = os.path.join(args.model_path, "best")
 
     # load train_args, model_args
     train_args, model_args = load_from_json(train_conf_path)

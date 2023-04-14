@@ -5,7 +5,7 @@ stage=1
 
 # data config
 kfold=5
-folds=`seq 1 $kfold`
+folds=`seq 5 $kfold`
 #scores="content pronunciation vocabulary"
 scores="content"
 test_book=1
@@ -14,9 +14,9 @@ trans_type=0317_trans_stt_tov   # trans_stt_tov -> cls, trans_stt_tov_wod -> reg
 
 # training config
 nj=4
-gpuid=3
-train_conf=conf/train_teemi_prototype_data2vec.json
-suffix=_cos_clsw0.95
+gpuid=0
+train_conf=conf/train_teemi_baseline_cls_data2vec.json
+suffix=_clsw0.95
 
 # eval config
 bins=""    # for cls

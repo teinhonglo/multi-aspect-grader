@@ -104,6 +104,7 @@ def main(args):
             model = AutoGraderModel(model_args, class_weight=class_weight, pretrained=True)
         model.freeze_feature_extractor()
     torch.save(model.config, args.exp_dir + '/config.pth')
+    #torch.save(model.model, args.exp_dir + '/encoder_model.pth')
 
     # NOTE: define metric
     def calculate_metrics(pred):

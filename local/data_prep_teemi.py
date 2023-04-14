@@ -11,9 +11,9 @@ parser.add_argument("--json", type=str)
 args = parser.parse_args()
 
 data_dict = {
-    "id":[], 
-    "audio":[], 
-    "text":[], 
+    "id":[],
+    "audio":[],
+    "text":[],
     "label":[],
 }
 
