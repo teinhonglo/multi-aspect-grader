@@ -2,6 +2,7 @@
 import os
 import sys
 import json
+import glob
 import argparse
 import torch
 import torchaudio
@@ -149,7 +150,7 @@ def main(args):
         tokenizer=feature_extractor,
     )
 
-    if args.resume:
+    if glob.glob(os.path.join(args.exp_dir, 'checkpoint*')):
         trainer.train(resume_from_checkpoint=True)
     else:
         trainer.train()
@@ -166,7 +167,6 @@ if __name__ == "__main__":
     parser.add_argument('--valid-json', type=str, help="kaldi-format data", default="/share/nas167/fuann/asr/gop_speechocean762/s5/data/test")
     parser.add_argument('--train-conf', type=str)
     parser.add_argument('--bins', default=None, help="for calculating accuracy-related metrics, it should be [1, 1.5, 2, 2.5, ...]")
-    parser.add_argument("--resume", action='store_true', default=False)
     parser.add_argument('--exp-dir', type=str, default="exp-finetune/facebook/wav2vec2-large-xlsr-53")
     parser.add_argument('--nj', type=int, default=4)
     args = parser.parse_args()

@@ -10,7 +10,7 @@
     "learning_rate": 1e-5,
     "weight_decay": 0,
     "warmup_steps": 0,
-    "save_total_limit": 1
+    "save_total_limit": 1,
     "metric_for_best_model": "eval_within_0.5",
     "greater_is_better": true
   },

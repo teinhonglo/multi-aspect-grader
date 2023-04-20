@@ -195,7 +195,7 @@ class AutoGraderPrototypeModel(nn.Module):
         if not os.path.exists(embed_path):
 
             prototype_initials = torch.full((self.num_labels, self.model.config.hidden_size), fill_value=eps)
-            
+
             def compute_embeddings(batch):
                 input_values = torch.as_tensor(batch["input_values"], device=device).unsqueeze(0)
                 labels = torch.as_tensor(batch["labels"], dtype=torch.long)
@@ -208,7 +208,7 @@ class AutoGraderPrototypeModel(nn.Module):
 
                 lv = labels-1
                 prototype_initials[lv] += embeddings.detach().cpu()
-            
+
             # compute all embeddings
             self.model.eval()
             self.model.to(device)
