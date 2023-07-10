@@ -16,6 +16,17 @@ import numpy as np
 from utils import make_dataset, DataCollatorCTCWithPadding, cal_class_weight, load_from_json, save_to_json
 from metrics_np import compute_metrics
 from model import AutoGraderModel, AutoGraderPrototypeModel
+import random
+
+# seed
+seed = 66
+torch.manual_seed(seed)
+torch.cuda.manual_seed(seed)
+torch.cuda.manual_seed_all(seed)
+np.random.seed(seed)
+random.seed(seed)
+torch.backends.cudnn.benchmark = False
+torch.backends.cudnn.deterministic = True
 
 def main(args):
 
@@ -48,7 +59,7 @@ def main(args):
         audio = batch["audio"]
         # extract features return input_values
         batch["input_values"] = feature_extractor(audio["array"], sampling_rate=audio["sampling_rate"]).input_values[0]
-        batch["labels"] = batch['label']
+        batch["labels"] = batch["label"]
         return batch
 
     # train set
@@ -79,9 +90,14 @@ def main(args):
     # NOTE: class_weight cal from trainset
     if model_args["class_weight_alpha"] != 0:
         assert model_args["problem_type"] == "single_label_classification"
-        print("[INFO] Use class weight alpha {} ...".format(model_args["class_weight_alpha"]))
+        if "loss_weight_type" in model_args:
+            loss_weight_type = model_args["loss_weight_type"]
+        else:
+            loss_weight_type = 2
+            
+        print("[INFO] Use class weight alpha {} and loss_weight_type {} ...".format(model_args["class_weight_alpha"], loss_weight_type))
         class_weight = cal_class_weight(tr_dataset['labels'], model_args["num_labels"], \
-            alpha=model_args["class_weight_alpha"]).to(device)
+            alpha=model_args["class_weight_alpha"], loss_weight_type=loss_weight_type).to(device)
     else:
         print("[INFO] No class weight is provide ...")
         class_weight = None
@@ -89,12 +105,14 @@ def main(args):
     # NOTE: define model
     if "local_path" in model_args:
         print("[INFO] Load pretrained {} model from {} ...".format(model_args["model_type"], model_args["local_path"],))
-        local_model = AutoGraderModel.from_pretrained(model_args["local_path"])
+        best_model_path = model_args["local_path"] + "/best"
         if model_args["model_type"] == "prototype":
             model = AutoGraderPrototypeModel(model_args, class_weight=class_weight, pretrained=True)
         else:
             model = AutoGraderModel(model_args, class_weight=class_weight, pretrained=True)
-        model.load_pretrained_wav2vec2(local_model.wav2vec2.state_dict())
+        model.load_state_dict(torch.load(best_model_path+"/pytorch_model.bin", map_location=device), strict=False) 
+        if model_args["model_type"] == "prototype" and model_args["init_prototypes"]:
+            model.init_prototypes(tr_dataset, path=train_dataset_path)
     else:
         print("[INFO] Train a {} model from {} ...".format(model_args["model_type"], model_args["model_path"]))
         if model_args["model_type"] == "prototype":
@@ -103,7 +121,6 @@ def main(args):
                 model.init_prototypes(tr_dataset, path=train_dataset_path)
         else:
             model = AutoGraderModel(model_args, class_weight=class_weight, pretrained=True)
-        model.freeze_feature_extractor()
     torch.save(model.config, args.exp_dir + '/config.pth')
     #torch.save(model.model, args.exp_dir + '/encoder_model.pth')
 

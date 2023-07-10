@@ -73,10 +73,17 @@ class AutoGraderModel(nn.Module):
         self.num_labels = self.config.num_labels
         self.class_weight = class_weight
         self.model.gradient_checkpointing_enable()
-
-
-    def freeze(self, module):
-        for parameter in module.parameters():
+        
+        # NOTE: freeze feature encoder
+        self.freeze_feature_extractor()
+        if "freeze_k_layers" in model_args:
+            self.freeze_k_layers(model_args["freeze_k_layers"])
+    
+    def freeze_k_layers(self, k):
+        if k > len(self.model.encoder.layers):
+            k = None
+        
+        for parameter in self.model.encoder.layers[:k].parameters():
             parameter.requires_grad = False
 
     def freeze_feature_extractor(self):
@@ -139,6 +146,7 @@ class AutoGraderModel(nn.Module):
             logits=logits,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
+            embeds=hidden_states
         )
 
 class AutoGraderPrototypeModel(nn.Module):
@@ -176,6 +184,18 @@ class AutoGraderPrototypeModel(nn.Module):
         self.num_labels = self.config.num_labels
         self.class_weight = class_weight
         self.model.gradient_checkpointing_enable()
+        
+        # NOTE: freeze feature encoder
+        self.freeze_feature_extractor()
+        if "freeze_k_layers" in model_args:
+            self.freeze_k_layers(model_args["freeze_k_layers"])
+    
+    def freeze_k_layers(self, k):
+        if k > len(self.model.encoder.layers):
+            k = None
+        
+        for parameter in self.model.encoder.layers[:k].parameters():
+            parameter.requires_grad = False
     
     def load_pretrained_wav2vec2(self, state_dict):
         self.model.load_state_dict(state_dict)
@@ -192,7 +212,7 @@ class AutoGraderPrototypeModel(nn.Module):
         print("[INFO] Initialize prototypes with wav2vec2 ...")
 
         embed_path = path + "/prototype_initials_var0.05.pt"
-        if not os.path.exists(embed_path):
+        if not os.path.exists(embed_path) or True:
 
             prototype_initials = torch.full((self.num_labels, self.model.config.hidden_size), fill_value=eps)
 
@@ -238,7 +258,6 @@ class AutoGraderPrototypeModel(nn.Module):
         self.prototype.weight = nn.Parameter(prototype_initials)
         #nn.init.orthogonal_(self.prototype.weight)  # Make prototype vectors orthogonal
 
-    
     def negative_sed(self, a, b):
         ''' negative square euclidean distance
         - input
@@ -263,6 +282,30 @@ class AutoGraderPrototypeModel(nn.Module):
 
         return logits
     
+    def negative_sed2(self, a, b):
+        ''' negative square euclidean distance
+        - input
+            a: batch x D
+            b: (num_label * num_proto) x D
+        - output
+            logits: batch x num_label
+        '''
+        
+        n = a.shape[0]
+        m = b.shape[0]
+        #if a.size(1) != b.size(1):
+        #    raise Exception
+     
+        a = a.unsqueeze(1).expand(n, m, -1)
+        b = b.unsqueeze(0).expand(n, m, -1)
+        logits = -((a - b)**2).sum(dim=2)
+        
+        # calculate centroid of prototypes
+        logits = logits.reshape(-1, self.num_prototypes, self.num_labels)
+        logits = logits.mean(dim=1)
+
+        return logits
+     
     def cosine_sim(self, a, b, scale=False):
         ''' cosine similarity
         - input
@@ -304,6 +347,8 @@ class AutoGraderPrototypeModel(nn.Module):
         # calculate distance
         if self.dist == "sed":
             logits = self.negative_sed(hidden_states, self.prototype.weight)
+        elif self.dist == "sed2":
+            logits = self.negative_sed2(hidden_states, self.prototype.weight)
         elif self.dist == "cos":
             logits = self.cosine_sim(hidden_states, self.prototype.weight)
         elif self.dist == "scos":

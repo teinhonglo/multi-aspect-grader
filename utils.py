@@ -17,21 +17,30 @@ def save_to_json(data_dict, path):
     with open(path, "w") as write_file:
         json.dump(data_dict, write_file, indent=4)
 
-def cal_class_weight(labels, n_classes, alpha=1.0, epsilon=1e-5):
+def cal_class_weight(labels, n_classes, alpha=1.0, epsilon=1e-5, loss_weight_type=2):
     # input: list
     # output: 1-d tensor
 
-    # normal re-weighting
-    labels = np.array(labels)
-    n_samples = len(labels)
-    n_samples_each = np.zeros(n_classes)
-    for c in range(n_classes):
-        indices = np.where(labels == (c+1))
-        n_samples_each[c] = len(labels[indices])
-    #class_weight = np.power(n_samples, alpha) / n_classes * np.power(n_samples_each, alpha)
-    class_weight = np.power(n_samples, alpha) / np.power(n_samples_each, alpha)
-    class_weight[np.isinf(class_weight)] = 0
-
+    if loss_weight_type == 2:
+        # normal re-weighting
+        labels = np.array(labels)
+        n_samples = len(labels)
+        n_samples_each = np.zeros(n_classes)
+        for c in range(n_classes):
+            indices = np.where(labels == (c+1))
+            n_samples_each[c] = len(labels[indices])
+        #class_weight = np.power(n_samples, alpha) / n_classes * np.power(n_samples_each, alpha)
+        class_weight = np.power(n_samples, alpha) / np.power(n_samples_each, alpha)
+        class_weight[np.isinf(class_weight)] = 0
+    elif loss_weight_type == 3:
+        beta=alpha
+        labels = np.array(labels)
+        n_samples_each = np.array([np.sum(labels == (c+1)) for c in range(n_classes)])
+        print(f"class distribution: {n_samples_each}")
+        #n_effective = 1.0 - np.power(beta, n_samples_each)
+        #class_weight = (1.0 - beta) / np.array(n_effective)
+        class_weight = [ ( 1 - beta ) / ( 1 - beta ** n) for n in n_samples_each]
+        class_weight = class_weight / np.sum(class_weight) * n_classes
     '''
     # cefr-sp
     labels = np.array(labels)
