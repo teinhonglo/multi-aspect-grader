@@ -15,8 +15,9 @@
     "greater_is_better": true
   },
   {
-    "model_path" : "facebook/wav2vec2-base",
+    "model_path" : "/share/homes/teinhonglo/hub_models/facebook/mms-1b",
     "problem_type": "single_label_classification",
+    "freeze_k_layers": 10000,
     "num_labels": 5,
     "model_type": "baseline",
     "class_weight_alpha": 0.0,

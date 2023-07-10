@@ -79,8 +79,9 @@ for score in scores:
     conf_mat_prec_df = pd.DataFrame(conf_mat_prec, index=labels, columns=labels)
 
     # save heatmap
-    sns.heatmap(data=conf_mat_prec_df, annot=conf_mat_df, fmt='g')
+    # cbar # bar
+    sns.heatmap(data=conf_mat_prec_df, annot=conf_mat_df, fmt='g', cbar=False)
     plt.xlabel("Predictions")
     plt.ylabel("Annotations")
-    plt.savefig(png_name)
+    plt.savefig(png_name, pad_inches=0)
     plt.clf()

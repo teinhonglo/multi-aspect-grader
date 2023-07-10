@@ -5,12 +5,12 @@
 kfold=1
 folds=`seq 1 $kfold`
 scores="holistic"
-tsv_root="data-speaking/icnale/trans_stt_whisperv2_large"
-json_root="data-json/icnale/trans_stt_whisperv2_large"
+tsv_root="data-speaking/icnale/trans_stt_whisper_large"
+json_root="data-json/icnale/trans_stt_whisper_large"
 
 # training config
 nj=4
-gpuid=2
+gpuid=1
 train_conf=conf/train_icnale_baseline_cls_wav2vec2.json
 suffix=
 
@@ -86,4 +86,9 @@ if [ $stage -le 4 ]; then
     python local/visualization.py \
         --result_root $exp_root --scores "$scores" --folds "$folds" \
         --bins "$vi_bins" --labels "$vi_labels"
+fi
+
+if [ $stage -le 5 ]; then
+    python plot_tsne.py \
+        --result_root $exp_root/holistic/1
 fi

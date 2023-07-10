@@ -16,10 +16,14 @@
   },
   {
     "model_path" : "facebook/wav2vec2-base",
+    "local_path": "exp/icnale/train_icnale_baseline_cls_wav2vec2/holistic/1",
     "problem_type": "single_label_classification",
     "num_labels": 5,
-    "model_type": "baseline",
+    "model_type": "prototype",
+    "dist": "sed2",
+    "num_prototypes": 3,
+    "init_prototypes": false,
     "class_weight_alpha": 0.0,
-    "final_dropout": 0.1
+    "final_dropout": 0.0
   }
 ]

@@ -19,7 +19,7 @@
     "problem_type": "single_label_classification",
     "num_labels": 5,
     "model_type": "baseline",
-    "class_weight_alpha": 0.0,
+    "class_weight_alpha": 1.0,
     "final_dropout": 0.1
   }
 ]

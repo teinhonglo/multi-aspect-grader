@@ -93,8 +93,7 @@ def main(args):
             input_values = torch.tensor(batch["input_values"], device=device).unsqueeze(0)
             output = model(input_values, return_dict=True)
             logits = output.logits
-            if model_args["model_type"] == 'prototype':
-                embed = output.embeds
+            embed = output.embeds
 
         if config.problem_type == "single_label_classification":
             pred_ids = torch.argmax(logits, dim=-1) + 1
@@ -104,9 +103,9 @@ def main(args):
         pred_ids = pred_ids.detach().cpu().numpy().item()
         batch["pred"] = pred_ids
 
-        if model_args["model_type"] == 'prototype':
-            embed = embed.detach().cpu().numpy()
-            batch["embed"] = embed # is list not numpy
+        #if model_args["model_type"] == 'prototype':
+        embed = embed.detach().cpu().numpy()
+        batch["embed"] = embed # is list not numpy
 
         return batch
 
@@ -127,11 +126,11 @@ def main(args):
                 results["id"][i], results["pred"][i], results["label"][i])
             )
 
+    # write embeds json
+    embeds_file = os.path.join(args.exp_dir, "embeds.json")
+    embed_json(results, embeds_file)
+    # write proto json
     if model_args["model_type"] == 'prototype':
-        # write embeds json
-        embeds_file = os.path.join(args.exp_dir, "embeds.json")
-        embed_json(results, embeds_file)
-        # write proto json
         proto_file = os.path.join(args.exp_dir, "protos.json")
         proto_json(prototype, proto_file)
 

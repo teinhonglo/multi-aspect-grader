@@ -15,7 +15,7 @@
     "greater_is_better": true
   },
   {
-    "model_path" : "facebook/wav2vec2-base",
+    "model_path" : "speech-seq2seq/wav2vec2-2-bert-large-no-adapter-frozen-enc",
     "problem_type": "single_label_classification",
     "num_labels": 5,
     "model_type": "baseline",
