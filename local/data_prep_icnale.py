@@ -13,7 +13,7 @@ data_dict = {
     "id":[], 
     "audio":[], 
     "text":[], 
-    "label":[],
+    "label":[]
 }
 
 with open(args.tsv, "r") as rf:
@@ -31,12 +31,13 @@ with open(args.tsv, "r") as rf:
             label = int(float(temp[3]))
         else:
             raise ValueError("No score {} is provided".format(args.score))
-
+        
         basename = os.path.basename(wav).split('.')[0]
         data_dict["id"].append(basename)
         data_dict["audio"].append(wav)
         data_dict["text"].append(text)
         data_dict["label"].append(label)
+
 
 with open(args.json, 'w') as jsonfile:
     json.dump(data_dict, jsonfile)

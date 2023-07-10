@@ -44,6 +44,7 @@ scores = args.scores.split()
 folds = args.folds.split()
 suffix = ".spk" if args.merge_speaker else ""
 
+
 def predictions_to_list(predictions_file, merge_speaker=False, bins=""):
 
     # make dictionary
