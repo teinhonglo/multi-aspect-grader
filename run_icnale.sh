@@ -29,8 +29,9 @@ stage=1
 . ./local/parse_options.sh
 . ./path.sh
 
+trans_tag=$(basename $tsv_root)
 conf_tag=$(basename -s .json $train_conf)
-exp_root=exp/icnale/${conf_tag}${suffix}
+exp_root=exp/icnale/$trans_tag/${conf_tag}${suffix}
 
 if [ $stage -le 0 ]; then
     for score in $scores; do
