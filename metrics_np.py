@@ -1,5 +1,6 @@
 import numpy as np
 import scipy.stats as stats
+from sklearn.metrics import f1_score
 
 def compute_metrics(total_losses, all_score_predictions, all_score_targets, bins=None):
     """ Computes Pearson correlation and accuracy within 0.5 and 1 of target score and adds each to total_losses dict. """
@@ -17,6 +18,7 @@ def compute_metrics(total_losses, all_score_predictions, all_score_targets, bins
     total_losses['within_1.0'] = _accuracy_within_margin(all_score_predictions, all_score_targets, 1)
     total_losses['mcwithin_0.5'] = compute_within_acc(all_score_predictions, all_score_targets, 0.5)
     total_losses['mcwithin_1.0'] = compute_within_acc(all_score_predictions, all_score_targets, 1)
+    total_losses['score'] = f1_score(all_score_targets, all_score_predictions, average='macro')
 
 def _accuracy_within_margin(score_predictions, score_target, margin, bins=None):
     """ Returns the percentage of predicted scores that are within the provided margin from the target score. """

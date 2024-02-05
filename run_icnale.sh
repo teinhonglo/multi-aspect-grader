@@ -5,8 +5,8 @@
 kfold=1
 folds=`seq 1 $kfold`
 scores="holistic"
-tsv_root="data-speaking/icnale/trans_stt_whisper_large"
-json_root="data-json/icnale/trans_stt_whisper_large"
+tsv_root="data-speaking/icnale/smil_trans_stt_whisper_large"
+json_root="data-json/icnale/smil_trans_stt_whisper_large"
 
 # training config
 nj=4
@@ -48,9 +48,16 @@ if [ $stage -le 0 ]; then
     exit 0
 fi
 
+
 if [ $stage -le 1 ]; then
     for score in $scores; do
         for fd in $folds; do
+            if [ -d $exp_root/$score/$fd/best ]; then
+                break
+            else
+                rm -rf $exp_root/$score/$fd
+            fi
+
             CUDA_VISIBLE_DEVICES="$gpuid" \
                 python train.py \
                     --train-conf $train_conf \

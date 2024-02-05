@@ -257,32 +257,8 @@ class AutoGraderPrototypeModel(nn.Module):
 
         self.prototype.weight = nn.Parameter(prototype_initials)
         #nn.init.orthogonal_(self.prototype.weight)  # Make prototype vectors orthogonal
-
-    def negative_sed(self, a, b):
-        ''' negative square euclidean distance
-        - input
-            a: batch x D
-            b: (num_label * num_proto) x D
-        - output
-            logits: batch x num_label
-        '''
-
-        # calculate centroid of prototypes
-        b = b.reshape(self.num_labels, self.num_prototypes, -1)
-        b = b.mean(dim=1)
-
-        n = a.shape[0]
-        m = b.shape[0]
-        if a.size(1) != b.size(1):
-            raise Exception
-     
-        a = a.unsqueeze(1).expand(n, m, -1)
-        b = b.unsqueeze(0).expand(n, m, -1)
-        logits = -((a - b)**2).sum(dim=2)
-
-        return logits
     
-    def negative_sed2(self, a, b):
+    def negative_sed(self, a, b):
         ''' negative square euclidean distance
         - input
             a: batch x D
@@ -303,6 +279,30 @@ class AutoGraderPrototypeModel(nn.Module):
         # calculate centroid of prototypes
         logits = logits.reshape(-1, self.num_prototypes, self.num_labels)
         logits = logits.mean(dim=1)
+
+        return logits
+    
+    def negative_sed2(self, a, b):
+        ''' negative square euclidean distance
+        - input
+            a: batch x D
+            b: (num_label * num_proto) x D
+        - output
+            logits: batch x num_label
+        '''
+
+        # calculate centroid of prototypes
+        b = b.reshape(self.num_labels, self.num_prototypes, -1)
+        b = b.mean(dim=1)
+
+        n = a.shape[0]
+        m = b.shape[0]
+        if a.size(1) != b.size(1):
+            raise Exception
+     
+        a = a.unsqueeze(1).expand(n, m, -1)
+        b = b.unsqueeze(0).expand(n, m, -1)
+        logits = -((a - b)**2).sum(dim=2)
 
         return logits
      

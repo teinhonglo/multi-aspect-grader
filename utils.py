@@ -21,6 +21,12 @@ def cal_class_weight(labels, n_classes, alpha=1.0, epsilon=1e-5, loss_weight_typ
     # input: list
     # output: 1-d tensor
 
+    if loss_weight_type == 1:
+        labels = np.array(labels)
+        class_ratio = np.array([np.sum(labels == (c+1)) for c in range(n_classes)])
+        class_ratio = class_ratio / np.sum(class_ratio)
+        class_weight = np.power(class_ratio, alpha) / np.sum(
+            np.power(class_ratio, alpha)) / (class_ratio + epsilon)
     if loss_weight_type == 2:
         # normal re-weighting
         labels = np.array(labels)
@@ -41,14 +47,6 @@ def cal_class_weight(labels, n_classes, alpha=1.0, epsilon=1e-5, loss_weight_typ
         #class_weight = (1.0 - beta) / np.array(n_effective)
         class_weight = [ ( 1 - beta ) / ( 1 - beta ** n) for n in n_samples_each]
         class_weight = class_weight / np.sum(class_weight) * n_classes
-    '''
-    # cefr-sp
-    labels = np.array(labels)
-    class_ratio = np.array([np.sum(labels == (c+1)) for c in range(n_classes)])
-    class_ratio = class_ratio / np.sum(class_ratio)
-    class_weight = np.power(class_ratio, alpha) / np.sum(
-        np.power(class_ratio, alpha)) / (class_ratio + epsilon)
-    '''
 
     return torch.Tensor(class_weight)
 
