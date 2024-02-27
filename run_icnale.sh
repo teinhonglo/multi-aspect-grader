@@ -5,8 +5,8 @@
 kfold=1
 folds=`seq 1 $kfold`
 scores="holistic"
-tsv_root="data-speaking/icnale/smil_trans_stt_whisper_large"
-json_root="data-json/icnale/smil_trans_stt_whisper_large"
+tsv_root="data-speaking/icnale/trans_stt_whisper_large"
+json_root="data-json/icnale/trans_stt_whisper_large"
 
 # training config
 nj=4
@@ -88,6 +88,8 @@ if [ $stage -le 3 ]; then
     python make_report.py --bins "$bins" \
         --result_root $exp_root --scores "$scores" --folds "$folds"
 fi
+
+exit 0;
 
 if [ $stage -le 4 ]; then
     # produce confusion matrix in $exp_root/score_name.png

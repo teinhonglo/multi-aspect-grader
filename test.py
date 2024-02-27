@@ -3,7 +3,7 @@ import os
 import json
 import argparse
 import torch
-import torchaudio
+from transformers import Wav2Vec2Processor
 from transformers import AutoConfig, AutoFeatureExtractor
 from transformers import TrainingArguments, Trainer
 from datasets import Dataset, Audio, load_metric, load_from_disk
@@ -54,34 +54,42 @@ def main(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     train_conf_path = os.path.join(args.model_path, "train_conf.json")
     config_path = os.path.join(args.model_path, "config.pth")
-    model_path = os.path.join(args.model_path, "best")
+    best_model_path = os.path.join(args.model_path, "best")
 
     # load train_args, model_args
     train_args, model_args = load_from_json(train_conf_path)
 
+    # load config and model
     config = torch.load(config_path)
-    feature_extractor = AutoFeatureExtractor.from_pretrained(model_path)
+    feature_extractor = AutoFeatureExtractor.from_pretrained(args.model_path)
+    
     if model_args["model_type"] == 'prototype':
         model = AutoGraderPrototypeModel(model_args, config=config).to(device)
         # num_labels, num_prototypes, dim
         prototype = model.get_prototype()
     else:
         model = AutoGraderModel(model_args, config=config).to(device)
-    model.load_state_dict(torch.load(model_path+"/pytorch_model.bin", map_location=device))
+    model.load_state_dict(torch.load(best_model_path+"/pytorch_model.bin", map_location=device))
     model.eval()
 
     # loading test set
     def preprocess_function(batch):
-        audio = batch["audio"]
         # extract features return input_values
-        batch["input_values"] = feature_extractor(audio["array"], sampling_rate=audio["sampling_rate"]).input_values[0]
+        batch["input_values"] = feature_extractor(batch["audio"]["array"], sampling_rate=batch["audio"]["sampling_rate"]).input_values[0]
+        batch["texts"] = batch['text']
         batch["labels"] = batch['label']
         return batch
 
-    test_dataset_path = os.path.dirname(args.test_json) + "/test_dataset"
+    # test set
+    model_name = "-".join(model_args["model_path"].split("/"))
+    test_basename = os.path.basename(args.test_json).split('.')[0]
+    test_basename += "_tts" if model_args["task_type"] == "mdd-tts" else ""
+    test_dataset_path = os.path.dirname(args.test_json) + "/{}/{}_dataset".format(model_name,test_basename)
     if not os.path.exists(test_dataset_path + "/dataset.arrow"):
-        te_dataset = make_dataset(args.test_json)
+        print("[INFO] Loading data from {} ...".format(args.test_json))
+        te_dataset = make_dataset(args.test_json, model_args)
         te_dataset = te_dataset.map(preprocess_function, num_proc=args.nj)
+        te_dataset = te_dataset.remove_columns(["audio"])
         te_dataset.save_to_disk(test_dataset_path)
     else:
         print("[INFO] {} exists, using it".format(test_dataset_path + "/dataset.arrow"))

@@ -7,6 +7,7 @@ from datasets import Dataset, Audio
 from typing import Any, Dict, List, Optional, Union
 from transformers import Wav2Vec2FeatureExtractor
 from dataclasses import dataclass, field
+from pysndfx import AudioEffectsChain
 
 def load_from_json(data_json):
     with open(data_json) as jsonfile:
@@ -56,20 +57,73 @@ def speech_file_to_array_fn(path):
     speech = resampler(speech_array).squeeze().numpy()
     return speech
 
-def make_dataset(data_json):
+def make_dataset(data_json, model_args, do_augment=False):
 
     print("Loading data from {} ...".format(data_json))
     data_dict = load_from_json(data_json)
 
     dataset = Dataset.from_dict(data_dict)
+    
     # batch[audio] include path, array
     dataset = dataset.cast_column("audio", Audio(sampling_rate=16000))
+    
+    if "audio_ref" in data_dict:
+        dataset = dataset.cast_column("audio_ref", Audio(sampling_rate=16000))
 
-    return dataset
+    if "speed_perturb" in model_args and do_augment :
+
+        # NOTE: 1 time of data
+        '''
+        def speed_pertubation(batch):
+
+            # NOTE: speed perturbation
+            AE = AudioEffectsChain()
+            speed_factor = random.choice(model_args["speed_perturb"])
+            AE = AE.speed(speed_factor)
+            fx = (AE)
+            batch["audio"]["array"] = fx(batch["audio"]["array"])
+
+            return batch
+
+        print("[INFO] random speed perturbation using speed {} ...".format(model_args["speed_perturb"]))
+        dataset = dataset.map(speed_pertubation, num_proc=4)
+
+        return dataset
+        '''
+        # NOTE: 3 times of data
+
+        augmented_dataset = copy.deepcopy(dataset)
+        for speed_factor in model_args["speed_perturb"]:
+            if speed_factor != 1:
+
+                # NOTE: data augmentation
+                def speed_pertubation(batch):
+
+                    # NOTE: speed perturbation
+                    AE = AudioEffectsChain()
+                    AE = AE.speed(speed_factor)
+                    fx = (AE)
+                    batch["audio"]["array"] = fx(batch["audio"]["array"])
+                    # rename id
+                    batch["id"] = batch["id"] + "_sp{}".format(speed_factor)
+
+                    return batch
+
+                print("[INFO] speed perturbation for speed {} ...".format(speed_factor))
+                augmented_dataset = concatenate_datasets([
+                    augmented_dataset,
+                    dataset.map(speed_pertubation, num_proc=4)
+                ])
+
+        return augmented_dataset
+
+    else:
+        return dataset
 
 @dataclass
 class DataCollatorCTCWithPadding:
     feature_extractor: Wav2Vec2FeatureExtractor
+    task_type: str
     problem_type: str
     padding: Union[bool, str] = True
     max_length: Optional[int] = None

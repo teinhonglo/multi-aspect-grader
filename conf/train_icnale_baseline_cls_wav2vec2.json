@@ -17,6 +17,7 @@
   {
     "model_path" : "facebook/wav2vec2-base",
     "problem_type": "single_label_classification",
+    "task_type": "grader",
     "num_labels": 5,
     "model_type": "baseline",
     "class_weight_alpha": 0.0,

@@ -21,19 +21,18 @@ with open(args.tsv, "r") as rf:
     for i, line in enumerate(rf.readlines()):
         
         if i == 0: 
+            columns = {key:header_index for header_index, key in enumerate(line.strip().split('\t'))}
             continue
 
         temp = line.strip().split('\t')
 
-        wav = temp[1]
-        text = temp[2]
-        if args.score == "holistic":
-            label = int(float(temp[3]))
-        else:
-            raise ValueError("No score {} is provided".format(args.score))
+        wav = temp[columns['wav_path']]
+        text = temp[columns['text']]
+        label = int(float(temp[columns[args.score]]))
         
-        basename = os.path.basename(wav).split('.')[0]
-        data_dict["id"].append(basename)
+        text_id = temp[columns['text_id']]
+        
+        data_dict["id"].append(text_id)
         data_dict["audio"].append(wav)
         data_dict["text"].append(text)
         data_dict["label"].append(label)

@@ -4,11 +4,12 @@ import sys
 import json
 import glob
 import argparse
+import random
 import torch
 import torchaudio
 from transformers import AutoConfig, AutoFeatureExtractor
 from transformers import TrainingArguments, Trainer
-from datasets import Dataset, Audio, load_from_disk
+from datasets import load_from_disk
 
 import numpy as np
 
@@ -16,17 +17,7 @@ import numpy as np
 from utils import make_dataset, DataCollatorCTCWithPadding, cal_class_weight, load_from_json, save_to_json
 from metrics_np import compute_metrics
 from model import AutoGraderModel, AutoGraderPrototypeModel
-import random
 
-# seed
-seed = 66
-torch.manual_seed(seed)
-torch.cuda.manual_seed(seed)
-torch.cuda.manual_seed_all(seed)
-np.random.seed(seed)
-random.seed(seed)
-torch.backends.cudnn.benchmark = False
-torch.backends.cudnn.deterministic = True
 
 def main(args):
 
@@ -52,31 +43,48 @@ def main(args):
         final_dropout=model_args["final_dropout"],
         gradient_checkpointing=True
     )
-    feature_extractor = AutoFeatureExtractor.from_pretrained(model_args["model_path"])
+    # load wav2vec2 model
+    feature_extractor = AutoFeatureExtractor.from_pretrained(
+        model_args["model_path"]
+    )
 
-    # data preprocess
+    # save to exp_dir
+    feature_extractor.save_pretrained(args.exp_dir)
+    print("[INFO] Save extractor to {} ...".format(args.exp_dir))
+
+    # NOTE: data preprocess
     def preprocess_function(batch):
-        audio = batch["audio"]
         # extract features return input_values
-        batch["input_values"] = feature_extractor(audio["array"], sampling_rate=audio["sampling_rate"]).input_values[0]
+        batch["input_values"] = feature_extractor(batch["audio"]["array"], sampling_rate=batch["audio"]["sampling_rate"]).input_values[0]
+        batch["texts"] = batch["text"]
         batch["labels"] = batch["label"]
         return batch
 
+    model_name = "-".join(model_args["model_path"].split("/"))
     # train set
-    train_dataset_path = os.path.dirname(args.train_json) + "/train_dataset"
+    train_basename = os.path.basename(args.train_json).split('.')[0]
+    train_basename += "_tts" if model_args["task_type"] == "mdd-tts" else ""
+    train_dataset_path = os.path.dirname(args.train_json) + "/{}/{}_dataset".format(model_name,train_basename)
+    
     if not os.path.exists(train_dataset_path + "/dataset.arrow"):
-        tr_dataset = make_dataset(args.train_json)
+        print("[INFO] Loading data from {} ...".format(args.train_json))
+        tr_dataset = make_dataset(args.train_json, model_args)
         tr_dataset = tr_dataset.map(preprocess_function, num_proc=args.nj)
+        tr_dataset = tr_dataset.remove_columns(["audio"])
         tr_dataset.save_to_disk(train_dataset_path)
     else:
         print("[INFO] {} exists, using it".format(train_dataset_path + "/dataset.arrow"))
         tr_dataset = load_from_disk(train_dataset_path)
 
     # valid set
-    valid_dataset_path = os.path.dirname(args.valid_json) + "/valid_dataset"
+    valid_basename = os.path.basename(args.valid_json).split('.')[0]
+    valid_basename += "_tts" if model_args["task_type"] == "mdd-tts" else ""
+    valid_dataset_path = os.path.dirname(args.valid_json) + "/{}/{}_dataset".format(model_name,valid_basename)
     if not os.path.exists(valid_dataset_path + "/dataset.arrow"):
-        cv_dataset = make_dataset(args.valid_json)
+        print("[INFO] Loading data from {} ...".format(args.valid_json))
+        cv_dataset = make_dataset(args.valid_json, model_args)
         cv_dataset = cv_dataset.map(preprocess_function, num_proc=args.nj)
+        cv_dataset = cv_dataset.remove_columns(["audio"])
         cv_dataset.save_to_disk(valid_dataset_path)
     else:
         print("[INFO] {} exists, using it".format(valid_dataset_path + "/dataset.arrow"))
@@ -84,7 +92,7 @@ def main(args):
 
     # data collator
     data_collator = DataCollatorCTCWithPadding(
-        feature_extractor=feature_extractor, problem_type=model_args["problem_type"], padding=True
+        feature_extractor=feature_extractor, problem_type=model_args["problem_type"], task_type=model_args["task_type"], padding=True
     )
 
     # NOTE: class_weight cal from trainset
@@ -103,16 +111,24 @@ def main(args):
         class_weight = None
 
     # NOTE: define model
-    if "local_path" in model_args:
-        print("[INFO] Load pretrained {} model from {} ...".format(model_args["model_type"], model_args["local_path"],))
-        best_model_path = model_args["local_path"] + "/best"
+    if "pretrained_path" in model_args:
+        print("[INFO] Load pretrained model from {} ...".format(model_args["pretrained_path"]))
+        best_model_path = model_args["pretrained_path"] + "/best"
         if model_args["model_type"] == "prototype":
-            model = AutoGraderPrototypeModel(model_args, class_weight=class_weight, pretrained=True)
+            model = AutoGraderPrototypeModel(model_args, class_weight=class_weight, pretrained=True).to(device)
         else:
-            model = AutoGraderModel(model_args, class_weight=class_weight, pretrained=True)
-        model.load_state_dict(torch.load(best_model_path+"/pytorch_model.bin", map_location=device), strict=False) 
-        if model_args["model_type"] == "prototype" and model_args["init_prototypes"]:
-            model.init_prototypes(tr_dataset, path=train_dataset_path)
+            model = AutoGraderModel(model_args, class_weight=class_weight, pretrained=True).to(device)
+        
+        total_params = sum(p.numel() for p in model.parameters())
+        loaded_params = total_params
+        missing_keys, _ = model.load_state_dict(torch.load(best_model_path+"/pytorch_model.bin", map_location=device), strict=False)
+        # Calculate the number of missing parameters
+        for key in missing_keys:
+            loaded_params -= model.state_dict()[key].numel()
+        
+        # Calculate the ratio of successfully loaded parameters
+        success_ratio = loaded_params / total_params
+        print("Success Load ratio", success_ratio)        
     else:
         print("[INFO] Train a {} model from {} ...".format(model_args["model_type"], model_args["model_path"]))
         if model_args["model_type"] == "prototype":
@@ -121,8 +137,14 @@ def main(args):
                 model.init_prototypes(tr_dataset, path=train_dataset_path)
         else:
             model = AutoGraderModel(model_args, class_weight=class_weight, pretrained=True)
+ 
+    # print # of parameters
+    trainables = [p for p in model.parameters() if p.requires_grad]
+    print('[INFO] Total parameter number is : {:.3f} M'.format(sum(p.numel() for p in model.parameters()) / 1e6))
+    print('[INFO] Total trainable parameter number is : {:.3f} M'.format(sum(p.numel() for p in trainables) / 1e6))
+    # save model_config
     torch.save(model.config, args.exp_dir + '/config.pth')
-    #torch.save(model.model, args.exp_dir + '/encoder_model.pth')
+    model.config.to_json_file(args.exp_dir + '/config.json')
 
     # NOTE: define metric
     def calculate_metrics(pred):
@@ -183,9 +205,27 @@ if __name__ == "__main__":
     parser.add_argument('--train-json', type=str, help="kaldi-format data", default="/share/nas167/fuann/asr/gop_speechocean762/s5/data/train")
     parser.add_argument('--valid-json', type=str, help="kaldi-format data", default="/share/nas167/fuann/asr/gop_speechocean762/s5/data/test")
     parser.add_argument('--train-conf', type=str)
+    parser.add_argument('--seed', type=int, default=66)
     parser.add_argument('--bins', default=None, help="for calculating accuracy-related metrics, it should be [1, 1.5, 2, 2.5, ...]")
     parser.add_argument('--exp-dir', type=str, default="exp-finetune/facebook/wav2vec2-large-xlsr-53")
     parser.add_argument('--nj', type=int, default=4)
     args = parser.parse_args()
 
+    # set seed
+    print("[INFO] Set manual seed {}".format(args.seed))
+    seed = args.seed
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    #torch.backends.cudnn.enabled = False
+    #os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+    #os.environ["CUBLAS_WORKSPACE_CONFIG"] = ':4096:8'
+    #torch.use_deterministic_algorithms(True)
+    
     main(args)
+    

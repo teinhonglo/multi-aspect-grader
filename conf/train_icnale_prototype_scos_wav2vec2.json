@@ -19,6 +19,7 @@
     "problem_type": "single_label_classification",
     "num_labels": 5,
     "model_type": "prototype",
+    "task_type": "grader",
     "dist": "scos",
     "num_prototypes": 3,
     "init_prototypes": false,
