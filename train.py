@@ -7,7 +7,7 @@ import argparse
 import random
 import torch
 import torchaudio
-from transformers import AutoConfig, AutoFeatureExtractor
+from transformers import AutoConfig, AutoFeatureExtractor, AutoTokenizer
 from transformers import TrainingArguments, Trainer
 from datasets import load_from_disk
 
@@ -16,7 +16,8 @@ import numpy as np
 # local import
 from utils import make_dataset, DataCollatorCTCWithPadding, cal_class_weight, load_from_json, save_to_json
 from metrics_np import compute_metrics
-from model import AutoGraderModel, AutoGraderPrototypeModel
+from models.baselines import AutoGraderModel, AutoMAGraderModel
+from models.prototypes import AutoGraderPrototypeModel
 
 
 def main(args):
@@ -35,28 +36,27 @@ def main(args):
     print("[NOTE] Model args ...")
     print(json.dumps(model_args, indent=4))
 
-    # load wav2vec2 config
-    config = AutoConfig.from_pretrained(
-        model_args["model_path"],
-        num_labels=model_args["num_labels"],
-        problem_type=model_args["problem_type"],
-        final_dropout=model_args["final_dropout"],
-        gradient_checkpointing=True
-    )
-    # load wav2vec2 model
+    # load the feature extractor of wav2vec2 
     feature_extractor = AutoFeatureExtractor.from_pretrained(
         model_args["model_path"]
     )
 
+    # load the tokenizer of bert
+    text_tokenizer = AutoTokenizer.from_pretrained(
+        model_args["text_model_path"]
+    )
+
     # save to exp_dir
     feature_extractor.save_pretrained(args.exp_dir)
-    print("[INFO] Save extractor to {} ...".format(args.exp_dir))
+    text_tokenizer.save_pretrained(args.exp_dir)
+    print("[INFO] Save extractor/tokenizer to {} ...".format(args.exp_dir))
 
     # NOTE: data preprocess
     def preprocess_function(batch):
         # extract features return input_values
         batch["input_values"] = feature_extractor(batch["audio"]["array"], sampling_rate=batch["audio"]["sampling_rate"]).input_values[0]
-        batch["texts"] = batch["text"]
+        batch["input_ids"] = batch["text"].lower()
+        batch["prompt_input_ids"] = batch["prompt"].lower()
         batch["labels"] = batch["label"]
         return batch
 
@@ -69,8 +69,7 @@ def main(args):
     if not os.path.exists(train_dataset_path + "/dataset.arrow"):
         print("[INFO] Loading data from {} ...".format(args.train_json))
         tr_dataset = make_dataset(args.train_json, model_args)
-        tr_dataset = tr_dataset.map(preprocess_function, num_proc=args.nj)
-        tr_dataset = tr_dataset.remove_columns(["audio"])
+        tr_dataset = tr_dataset.map(preprocess_function, num_proc=args.nj, remove_columns=["audio"])
         tr_dataset.save_to_disk(train_dataset_path)
     else:
         print("[INFO] {} exists, using it".format(train_dataset_path + "/dataset.arrow"))
@@ -83,8 +82,7 @@ def main(args):
     if not os.path.exists(valid_dataset_path + "/dataset.arrow"):
         print("[INFO] Loading data from {} ...".format(args.valid_json))
         cv_dataset = make_dataset(args.valid_json, model_args)
-        cv_dataset = cv_dataset.map(preprocess_function, num_proc=args.nj)
-        cv_dataset = cv_dataset.remove_columns(["audio"])
+        cv_dataset = cv_dataset.map(preprocess_function, num_proc=args.nj, remove_columns=["audio"])
         cv_dataset.save_to_disk(valid_dataset_path)
     else:
         print("[INFO] {} exists, using it".format(valid_dataset_path + "/dataset.arrow"))
@@ -92,7 +90,11 @@ def main(args):
 
     # data collator
     data_collator = DataCollatorCTCWithPadding(
-        feature_extractor=feature_extractor, problem_type=model_args["problem_type"], task_type=model_args["task_type"], padding=True
+        feature_extractor=feature_extractor, 
+        tokenizer=text_tokenizer,
+        problem_type=model_args["problem_type"], 
+        task_type=model_args["task_type"], 
+        padding=True
     )
 
     # NOTE: class_weight cal from trainset
@@ -114,10 +116,15 @@ def main(args):
     if "pretrained_path" in model_args:
         print("[INFO] Load pretrained model from {} ...".format(model_args["pretrained_path"]))
         best_model_path = model_args["pretrained_path"] + "/best"
-        if model_args["model_type"] == "prototype":
-            model = AutoGraderPrototypeModel(model_args, class_weight=class_weight, pretrained=True).to(device)
+        
+        if model_args["model_type"] == 'prototype':
+            model = AutoGraderPrototypeModel(model_args, config=config, text_config=text_config).to(device)
+            # num_labels, num_prototypes, dim
+            prototype = model.get_prototype()
+        elif model_args["model_type"] == "multi_aspect":
+            model = AutoMAGraderModel(model_args, config=config, text_config=text_config).to(device)
         else:
-            model = AutoGraderModel(model_args, class_weight=class_weight, pretrained=True).to(device)
+            model = AutoGraderModel(model_args, config=config, text_config=text_config).to(device)
         
         total_params = sum(p.numel() for p in model.parameters())
         loaded_params = total_params
@@ -135,6 +142,8 @@ def main(args):
             model = AutoGraderPrototypeModel(model_args, class_weight=class_weight, pretrained=True)
             if model_args["init_prototypes"]:
                 model.init_prototypes(tr_dataset, path=train_dataset_path)
+        elif model_args["model_type"] == "multi_aspect":
+            model = AutoMAGraderModel(model_args, config=config, text_config=text_config).to(device)
         else:
             model = AutoGraderModel(model_args, class_weight=class_weight, pretrained=True)
  
@@ -145,6 +154,8 @@ def main(args):
     # save model_config
     torch.save(model.config, args.exp_dir + '/config.pth')
     model.config.to_json_file(args.exp_dir + '/config.json')
+    torch.save(model.text_config, args.exp_dir + '/text_config.pth')
+    model.text_config.to_json_file(args.exp_dir + '/text_config.json')
 
     # NOTE: define metric
     def calculate_metrics(pred):

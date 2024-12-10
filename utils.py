@@ -5,9 +5,11 @@ import numpy as np
 import torchaudio
 from datasets import Dataset, Audio
 from typing import Any, Dict, List, Optional, Union
-from transformers import Wav2Vec2FeatureExtractor
+from transformers import AutoFeatureExtractor, AutoTokenizer
 from dataclasses import dataclass, field
 from pysndfx import AudioEffectsChain
+
+from torch.nn.utils.rnn import pad_sequence
 
 def load_from_json(data_json):
     with open(data_json) as jsonfile:
@@ -67,29 +69,7 @@ def make_dataset(data_json, model_args, do_augment=False):
     # batch[audio] include path, array
     dataset = dataset.cast_column("audio", Audio(sampling_rate=16000))
     
-    if "audio_ref" in data_dict:
-        dataset = dataset.cast_column("audio_ref", Audio(sampling_rate=16000))
-
     if "speed_perturb" in model_args and do_augment :
-
-        # NOTE: 1 time of data
-        '''
-        def speed_pertubation(batch):
-
-            # NOTE: speed perturbation
-            AE = AudioEffectsChain()
-            speed_factor = random.choice(model_args["speed_perturb"])
-            AE = AE.speed(speed_factor)
-            fx = (AE)
-            batch["audio"]["array"] = fx(batch["audio"]["array"])
-
-            return batch
-
-        print("[INFO] random speed perturbation using speed {} ...".format(model_args["speed_perturb"]))
-        dataset = dataset.map(speed_pertubation, num_proc=4)
-
-        return dataset
-        '''
         # NOTE: 3 times of data
 
         augmented_dataset = copy.deepcopy(dataset)
@@ -122,7 +102,8 @@ def make_dataset(data_json, model_args, do_augment=False):
 
 @dataclass
 class DataCollatorCTCWithPadding:
-    feature_extractor: Wav2Vec2FeatureExtractor
+    feature_extractor: AutoFeatureExtractor
+    tokenizer: AutoTokenizer
     task_type: str
     problem_type: str
     padding: Union[bool, str] = True
@@ -136,12 +117,7 @@ class DataCollatorCTCWithPadding:
         # different padding methods
         input_features = [{"input_values": feature["input_values"]} for feature in features]
         label_features = [feature["labels"] for feature in features]
-        #if self.problem_type == "single_label_classification":
-        #    label_features = [int(feature["labels"]) for feature in features]
-        #    d_type = torch.long
-        #else:
-        #    label_features = [feature["labels"] for feature in features]
-        #    d_type = torch.float
+
         d_type = torch.long if self.problem_type == "single_label_classification" else torch.float
 
         batch = self.feature_extractor.pad(
@@ -152,5 +128,47 @@ class DataCollatorCTCWithPadding:
             return_tensors="pt",
         )
         batch["labels"] = torch.tensor(label_features, dtype=d_type)
+
+        # response (text)
+        text_list = [ feature["input_ids"] for feature in features]
+        
+        text_batch = self.tokenizer(text_list, 
+                                max_length=256,
+                                padding='max_length', 
+                                truncation=True,
+                                return_tensors='pt') # ['input_ids', 'token_type_ids', 'attention_mask']
+
+        batch["input_ids"] = text_batch["input_ids"]
+        batch["text_attention_mask"] = text_batch["attention_mask"]
+
+        # prompt
+        prompt_list = [ feature["prompt_input_ids"] for feature in features]
+        
+        prompt_batch = self.tokenizer(prompt_list, 
+                                max_length=256,
+                                padding='max_length', 
+                                truncation=True,
+                                return_tensors='pt') # ['input_ids', 'token_type_ids', 'attention_mask']
+
+        batch["prompt_input_ids"] = prompt_batch["input_ids"]
+        batch["prompt_attention_mask"] = prompt_batch["attention_mask"]
+        
+        if "delivery" in features[0]:
+            # delivery (word-level sequence)
+            delivery = [torch.tensor(feature["delivery"]) for feature in features]
+            delivery = pad_sequence(delivery, batch_first=True, padding_value=0)
+            delivery_mask = ~(delivery == 0).all(dim=2)
+            delivery_mask = delivery_mask.long()
+            batch["delivery"] = delivery
+            batch["delivery_mask"] = delivery_mask
+            
+        if "language_use" in features[0]:
+            # language use (token-level sequence)
+            language_use = [torch.tensor(feature["language_use"]) for feature in features]
+            language_use = pad_sequence(language_use, batch_first=True, padding_value=0)
+            language_use_mask = ~(language_use == 0).all(dim=2)
+            language_use_mask = language_use_mask.long()
+            batch["language_use"] = language_use
+            batch["language_use_mask"] = language_use_mask
 
         return batch

@@ -5,149 +5,10 @@ from typing import Optional, Tuple
 from transformers.file_utils import ModelOutput
 from transformers import AutoModel, AutoConfig
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
+from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence, pad_sequence
 
 import os
-from datasets import load_from_disk
-
-class MeanPooling(nn.Module):
-    def __init__(self):
-        super(MeanPooling, self).__init__()
-
-    def forward(self, last_hidden_state, attention_mask):
-        input_mask_expanded = attention_mask.unsqueeze(-1).expand(last_hidden_state.size()).float()
-        sum_embeddings = torch.sum(last_hidden_state * input_mask_expanded, 1)
-        sum_mask = input_mask_expanded.sum(1)
-        sum_mask = torch.clamp(sum_mask, min=1e-9)
-        mean_embeddings = sum_embeddings / sum_mask
-        return mean_embeddings
-
-class PredictionHead(nn.Module):
-    def __init__(self, config):
-        super(PredictionHead, self).__init__()
-        self.dense = nn.Linear(config.hidden_size, config.hidden_size)
-        self.dropout = nn.Dropout(config.final_dropout)
-        self.linear = nn.Linear(config.hidden_size, config.num_labels)
-
-    def forward(self, x):
-        x = self.dropout(x)
-        x = self.dense(x)
-        x = torch.tanh(x)
-        x = self.dropout(x)
-        x = self.linear(x)
-        return x
-
-@dataclass
-class SpeechClassifierOutput(ModelOutput):
-    loss: Optional[torch.FloatTensor] = None
-    logits: torch.FloatTensor = None
-    hidden_states: Optional[Tuple[torch.FloatTensor]] = None
-    attentions: Optional[Tuple[torch.FloatTensor]] = None
-    embeds: Optional[torch.FloatTensor] = None
-
-class AutoGraderModel(nn.Module):
-
-    def __init__(self, model_args, class_weight=None, config=None, pretrained=False):
-        super(AutoGraderModel, self).__init__()
-
-        # config
-        if config is None:
-            self.config = AutoConfig.from_pretrained(
-                model_args["model_path"],
-                num_labels=model_args["num_labels"],
-                problem_type=model_args["problem_type"],
-                final_dropout=model_args["final_dropout"]
-            )
-        else:
-            self.config = config
-
-        # model
-        if pretrained:
-            self.model = AutoModel.from_pretrained(model_args["model_path"], config=self.config)
-        else:
-            self.model = AutoModel.from_config(self.config)
-
-        # prediction head
-        self.prediction_head = PredictionHead(self.config)
-
-        # other
-        self.num_labels = self.config.num_labels
-        self.class_weight = class_weight
-        self.model.gradient_checkpointing_enable()
-        
-        # NOTE: freeze feature encoder
-        self.freeze_feature_extractor()
-        if "freeze_k_layers" in model_args:
-            self.freeze_k_layers(model_args["freeze_k_layers"])
-    
-    def freeze_k_layers(self, k):
-        if k > len(self.model.encoder.layers):
-            k = None
-        
-        for parameter in self.model.encoder.layers[:k].parameters():
-            parameter.requires_grad = False
-
-    def freeze_feature_extractor(self):
-        self.model.feature_extractor._freeze_parameters()
-
-    def load_pretrained_wav2vec2(self, state_dict):
-        self.model.load_state_dict(state_dict)
-        self.model.feature_extractor._freeze_parameters()
-
-    def forward(self,
-        input_values,
-        attention_mask=None,
-        output_attentions=None,
-        output_hidden_states=None,
-        return_dict=None,
-        labels=None,
-    ):
-        outputs = self.model(
-            input_values,
-            attention_mask=attention_mask,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-        )
-        hidden_states = outputs[0]
-        hidden_states = torch.mean(hidden_states, dim=1)
-        #hidden_states = self.pooler(hidden_states, input_values['attention_mask'])
-        logits = self.prediction_head(hidden_states)
-
-        loss = None
-        if labels is not None:
-            if self.config.problem_type is None:
-                if self.num_labels == 1:
-                    self.config.problem_type = "regression"
-                elif self.num_labels > 1 and (labels.dtype == torch.long or labels.dtype == torch.int):
-                    self.config.problem_type = "single_label_classification"
-                else:
-                    self.config.problem_type = "multi_label_classification"
-
-            if self.config.problem_type == "regression":
-                loss_fct = MSELoss()
-                logits = logits.squeeze(-1)
-                loss = loss_fct(logits, labels)
-            elif self.config.problem_type == "single_label_classification":
-                loss_fct = CrossEntropyLoss(weight=self.class_weight)
-                # labels 1-8 to 0-7
-                # NOTE: teemi: 1-9 to 0-8
-                labels = labels - 1
-                loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
-            elif self.config.problem_type == "multi_label_classification":
-                loss_fct = BCEWithLogitsLoss()
-                loss = loss_fct(logits, labels)
-
-        if not return_dict:
-            output = (logits,) + outputs[2:]
-            return ((loss,) + output) if loss is not None else output
-
-        return SpeechClassifierOutput(
-            loss=loss,
-            logits=logits,
-            hidden_states=outputs.hidden_states,
-            attentions=outputs.attentions,
-            embeds=hidden_states
-        )
+from transformers.models.wav2vec2 import Wav2Vec2PreTrainedModel
 
 class AutoGraderPrototypeModel(nn.Module):
 
@@ -189,20 +50,6 @@ class AutoGraderPrototypeModel(nn.Module):
         self.freeze_feature_extractor()
         if "freeze_k_layers" in model_args:
             self.freeze_k_layers(model_args["freeze_k_layers"])
-    
-    def freeze_k_layers(self, k):
-        if k > len(self.model.encoder.layers):
-            k = None
-        
-        for parameter in self.model.encoder.layers[:k].parameters():
-            parameter.requires_grad = False
-    
-    def load_pretrained_wav2vec2(self, state_dict):
-        self.model.load_state_dict(state_dict)
-        self.model.feature_extractor._freeze_parameters()
-    
-    def freeze_feature_extractor(self):
-        self.model.feature_extractor._freeze_parameters()
 
     def get_prototype(self):
         return self.prototype.weight.reshape(self.num_labels, self.num_prototypes, -1).detach().cpu()
@@ -390,4 +237,5 @@ class AutoGraderPrototypeModel(nn.Module):
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
             embeds=hidden_states
-        )
+        )        
+

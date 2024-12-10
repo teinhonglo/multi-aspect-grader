@@ -4,7 +4,7 @@ import json
 import argparse
 import torch
 from transformers import Wav2Vec2Processor
-from transformers import AutoConfig, AutoFeatureExtractor
+from transformers import AutoConfig, AutoFeatureExtractor, AutoTokenizer
 from transformers import TrainingArguments, Trainer
 from datasets import Dataset, Audio, load_metric, load_from_disk
 
@@ -16,7 +16,8 @@ from collections import defaultdict
 # local import
 from utils import make_dataset, load_from_json
 from metrics_np import compute_metrics
-from model import AutoGraderModel, AutoGraderPrototypeModel
+from models.baselines import AutoGraderModel, AutoMAGraderModel
+from models.prototypes import AutoGraderPrototypeModel
 
 def embed_json(results, json_path):
     embed_dict = defaultdict(dict)
@@ -31,8 +32,8 @@ def embed_json(results, json_path):
         embed_dict[wavid]["label"] = label
         embed_dict[wavid]["pred"] = pred
     
-    with open(json_path, 'w') as jf:
-        json.dump(embed_dict, jf, indent=4)
+    with open(json_path, 'w') as fn:
+        json.dump(embed_dict, fn, indent=4)
 
 def proto_json(prototype, json_path):
     proto_dict = defaultdict(list)
@@ -54,6 +55,7 @@ def main(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     train_conf_path = os.path.join(args.model_path, "train_conf.json")
     config_path = os.path.join(args.model_path, "config.pth")
+    text_config_path = os.path.join(args.model_path, "text_config.pth")
     best_model_path = os.path.join(args.model_path, "best")
 
     # load train_args, model_args
@@ -61,14 +63,18 @@ def main(args):
 
     # load config and model
     config = torch.load(config_path)
+    text_config = torch.load(text_config_path)
     feature_extractor = AutoFeatureExtractor.from_pretrained(args.model_path)
+    text_tokenizer = AutoTokenizer.from_pretrained(args.model_path)
     
     if model_args["model_type"] == 'prototype':
-        model = AutoGraderPrototypeModel(model_args, config=config).to(device)
+        model = AutoGraderPrototypeModel(model_args, config=config, text_config=text_config).to(device)
         # num_labels, num_prototypes, dim
         prototype = model.get_prototype()
+    elif model_args["model_args"] == "multi_aspect":
+        model = AutoMAGraderModel(model_args, config=config, text_config=text_config).to(device)
     else:
-        model = AutoGraderModel(model_args, config=config).to(device)
+        model = AutoGraderModel(model_args, config=config, text_config=text_config).to(device)
     model.load_state_dict(torch.load(best_model_path+"/pytorch_model.bin", map_location=device))
     model.eval()
 
@@ -76,7 +82,8 @@ def main(args):
     def preprocess_function(batch):
         # extract features return input_values
         batch["input_values"] = feature_extractor(batch["audio"]["array"], sampling_rate=batch["audio"]["sampling_rate"]).input_values[0]
-        batch["texts"] = batch['text']
+        batch["input_ids"] = batch['text'].lower()
+        batch["prompt_input_ids"] = batch["prompt"].lower()
         batch["labels"] = batch['label']
         return batch
 
@@ -88,8 +95,7 @@ def main(args):
     if not os.path.exists(test_dataset_path + "/dataset.arrow"):
         print("[INFO] Loading data from {} ...".format(args.test_json))
         te_dataset = make_dataset(args.test_json, model_args)
-        te_dataset = te_dataset.map(preprocess_function, num_proc=args.nj)
-        te_dataset = te_dataset.remove_columns(["audio"])
+        te_dataset = te_dataset.map(preprocess_function, num_proc=args.nj, remove_columns=["audio"])
         te_dataset.save_to_disk(test_dataset_path)
     else:
         print("[INFO] {} exists, using it".format(test_dataset_path + "/dataset.arrow"))
@@ -99,7 +105,18 @@ def main(args):
     def predict(batch):
         with torch.no_grad():
             input_values = torch.tensor(batch["input_values"], device=device).unsqueeze(0)
-            output = model(input_values, return_dict=True)
+            input_ids = text_tokenizer(batch["input_ids"], max_length=256, padding='max_length', truncation=True, return_tensors='pt').input_ids.to(device)
+            prompt_input_ids = text_tokenizer(batch["prompt_input_ids"], max_length=256, padding='max_length', truncation=True, return_tensors='pt').input_ids.to(device)
+            delivery = torch.tensor([batch["delivery"]]).to(device)
+            language_use = torch.tensor([batch["language_use"]]).to(device)
+            
+            output = model( input_values=input_values, 
+                            input_ids=input_ids, 
+                            prompt_input_ids=prompt_input_ids, 
+                            delivery=delivery,
+                            language_use=language_use,
+                            return_dict=True)
+
             logits = output.logits
             embed = output.embeds
 
@@ -136,11 +153,11 @@ def main(args):
 
     # write embeds json
     embeds_file = os.path.join(args.exp_dir, "embeds.json")
-    embed_json(results, embeds_file)
+    #embed_json(results, embeds_file)
     # write proto json
-    if model_args["model_type"] == 'prototype':
-        proto_file = os.path.join(args.exp_dir, "protos.json")
-        proto_json(prototype, proto_file)
+    #if model_args["model_type"] == 'prototype':
+    #    proto_file = os.path.join(args.exp_dir, "protos.json")
+    #    proto_json(prototype, proto_file)
 
 
 if __name__ == "__main__":
