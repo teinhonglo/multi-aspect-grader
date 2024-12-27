@@ -43,9 +43,8 @@ class ClassifierOutput(ModelOutput):
     attentions: Optional[Tuple[torch.FloatTensor]] = None
     embeds: Optional[torch.FloatTensor] = None
 
-class AutoGraderModel(Wav2Vec2PreTrainedModel):
-    def __init__(self, model_args, class_weight=None, config=None, text_config=None, pretrained=False): 
-
+class AutoMAGraderModel(Wav2Vec2PreTrainedModel):
+    def __init__(self, model_args, class_weight=None, config=None, text_config=None, pretrained=False):
         # config
         if config is None:
             self.config = AutoConfig.from_pretrained(
@@ -62,22 +61,29 @@ class AutoGraderModel(Wav2Vec2PreTrainedModel):
             self.text_config = text_config
 
         super().__init__(self.config)
+        
         # model
         if pretrained:
             self.model = AutoModel.from_pretrained(model_args["model_path"], config=self.config)
+            self.text_model = AutoModel.from_pretrained(model_args["text_model_path"], config=self.text_config)
         else:
             self.model = AutoModel.from_config(self.config)
+            self.text_model = AutoModel.from_config(self.text_config)
 
-        #self.speech_attn_pool = AttentionPooling(in_dim=self.config.hidden_size + self.text_config.hidden_size)
-        self.pool_type = model_args["pool_type"]
-        
-        if self.pool_type == "attn":
-            self.speech_pool = AttentionPooling(in_dim=self.config.hidden_size)
-        elif self.pool_type == "mean":
-            self.speech_pool = MeanPooling()
+        # content
+        self.content_encoder = TransformerEncoder(dim=self.config.hidden_size, mlp_hidden_dim=3*self.config.hidden_size, use_rope=True, max_seq_len=5000, act_layer="nn.SiLU", mlp_mdl="Mlp2")
+        self.content_pooling = AttentionPooling(in_dim=self.config.hidden_size)
+
+        # delivery
+        self.delivery_encoder = TransformerEncoder(in_dim=15, num_heads=1, mlp_hidden_dim=3*45, use_rope=True, max_seq_len=5000, act_layer="nn.SiLU", mlp_mdl="Mlp2")
+        self.delivery_pooling = AttentionPooling(in_dim=15)
+
+        # language use
+        self.language_use_encoder = TransformerEncoder(in_dim=263, num_heads=1, mlp_hidden_dim=3*263, use_rope=True, max_seq_len=5000, act_layer="nn.SiLU", mlp_mdl="Mlp2")
+        self.language_use_pooling = AttentionPooling(in_dim=263)
+
+        self.proj_layer = nn.Linear(self.config.hidden_size + 15 + 263, self.config.hidden_size)
         # prediction head
-        #self.prediction_head = PredictionHead(config=self.config, 
-        #                                      input_dim=(self.config.hidden_size + self.text_config.hidden_size))
         self.prediction_head = PredictionHead(config=self.config, 
                                               input_dim=self.config.hidden_size)
 
@@ -131,23 +137,55 @@ class AutoGraderModel(Wav2Vec2PreTrainedModel):
         )
         hidden_states = outputs[0]
         
+        # prompt
+        prompt_outputs = self.text_model(
+            prompt_input_ids,
+            attention_mask=prompt_attention_mask
+        )
+        
         # create mask
+        # response
         attention_mask = (
             attention_mask if attention_mask is not None else torch.ones_like(input_values, dtype=torch.long)
         )
-         
-        # response (audio)
+        text_attention_mask = (
+            text_attention_mask if text_attention_mask is not None else torch.ones_like(input_ids, dtype=torch.long)
+        )
+        # prompt
+        prompt_attention_mask = (
+            prompt_attention_mask if prompt_attention_mask is not None else torch.ones_like(prompt_input_ids, dtype=torch.long)
+        )
+        # delivery
+        delivery_mask = (
+            delivery_mask if delivery_mask is not None else ~(torch.ones_like(delivery, dtype=torch.long) == 0).all(dim=2).long()
+        )
+        # language use
+        language_use_mask = (
+            language_use_mask if language_use_mask is not None else ~(torch.ones_like(language_use, dtype=torch.long) == 0).all(dim=2).long()
+        )
+
+        # content (audio)
         padding_mask = self._get_feature_vector_attention_mask(hidden_states.shape[1], attention_mask)
-        #hidden_states = torch.cat([hidden_states, text_hidden_states], dim=-1)
-        hidden_states[~padding_mask] = 0.0
+        content_vector = self.content_encoder(x=content_hidden_states, mask=attention_mask)
+        content_vector, _ = self.content_pooling(x=content_vector, attn=content_vector, mask=attention_mask)
+
+        # delivery
+        delivery_vector = self.delivery_encoder(x=delivery, mask=delivery_mask)
+        delivery_vector, _ = self.delivery_pooling(x=delivery_vector, attn=delivery_vector, mask=delivery_mask)
+
+        # language use
+        language_use_vector = self.language_use_encoder(x=language_use, mask=language_use_mask)
+        language_use_vector, _ = self.language_use_pooling(x=language_use_vector, attn=language_use_vector, mask=language_use_mask)
         
-        if self.pool_type == "attn":
-            hidden_states, _ = self.speech_pool(x=hidden_states, attn=hidden_states, mask=padding_mask)
-        elif self.pool_type == "mean":
-            hidden_states, _ = self.speech_pool(x=hidden_states, mask=padding_mask)
+        # content
+        # prompt (text)
+        prompt_hidden_states = prompt_outputs["last_hidden_state"] # B, T, H       
+        prompt_vector = prompt_hidden_states[:,0,:] # B, H 
         
-        logits = self.prediction_head(hidden_states)
-        
+        fusion_hidden_states = torch.cat([prompt_vector, content_vector, delivery_vector, language_use_vector], dim=-1)
+        fusion_hidden_states = self.proj_layer(fusion_hidden_states)
+        logits = self.prediction_head(fusion_hidden_states)
+
         loss = None
         if labels is not None:
             if self.config.problem_type is None:

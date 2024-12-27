@@ -16,7 +16,8 @@ from collections import defaultdict
 # local import
 from utils import make_dataset, load_from_json
 from metrics_np import compute_metrics
-from models.baselines import AutoGraderModel, AutoMAGraderModel
+from models.baselines import AutoGraderModel
+from models.multi_aspects import AutoMAGraderModel
 from models.prototypes import AutoGraderPrototypeModel
 
 def embed_json(results, json_path):
@@ -66,15 +67,18 @@ def main(args):
     text_config = torch.load(text_config_path)
     feature_extractor = AutoFeatureExtractor.from_pretrained(args.model_path)
     text_tokenizer = AutoTokenizer.from_pretrained(args.model_path)
+    model_type = model_args["model_type"]
     
-    if model_args["model_type"] == 'prototype':
+    if model_type == 'prototype':
         model = AutoGraderPrototypeModel(model_args, config=config, text_config=text_config).to(device)
         # num_labels, num_prototypes, dim
         prototype = model.get_prototype()
-    elif model_args["model_args"] == "multi_aspect":
+    elif model_type == "multi_aspect":
         model = AutoMAGraderModel(model_args, config=config, text_config=text_config).to(device)
-    else:
+    elif model_type == "baseline":
         model = AutoGraderModel(model_args, config=config, text_config=text_config).to(device)
+    else:
+    	raise ValueError(f"Invalid model {model_type}")
     model.load_state_dict(torch.load(best_model_path+"/pytorch_model.bin", map_location=device))
     model.eval()
 
@@ -84,6 +88,8 @@ def main(args):
         batch["input_values"] = feature_extractor(batch["audio"]["array"], sampling_rate=batch["audio"]["sampling_rate"]).input_values[0]
         batch["input_ids"] = batch['text'].lower()
         batch["prompt_input_ids"] = batch["prompt"].lower()
+        batch["delivery"] = batch["delivery"]
+        batch["language_use"] = batch["language_use"]
         batch["labels"] = batch['label']
         return batch
 
@@ -110,11 +116,17 @@ def main(args):
             delivery = torch.tensor([batch["delivery"]]).to(device)
             language_use = torch.tensor([batch["language_use"]]).to(device)
             
-            output = model( input_values=input_values, 
+            if model_type == "multi_aspect":
+                output = model( input_values=input_values, 
                             input_ids=input_ids, 
                             prompt_input_ids=prompt_input_ids, 
                             delivery=delivery,
                             language_use=language_use,
+                            return_dict=True)
+            elif model_type in ["baseline", "prototype"]:
+                output = model( input_values=input_values, 
+                            input_ids=input_ids, 
+                            prompt_input_ids=prompt_input_ids, 
                             return_dict=True)
 
             logits = output.logits

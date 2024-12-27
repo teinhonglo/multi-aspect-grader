@@ -16,7 +16,8 @@ import numpy as np
 # local import
 from utils import make_dataset, DataCollatorCTCWithPadding, cal_class_weight, load_from_json, save_to_json
 from metrics_np import compute_metrics
-from models.baselines import AutoGraderModel, AutoMAGraderModel
+from models.baselines import AutoGraderModel
+from models.multi_aspects import AutoMAGraderModel
 from models.prototypes import AutoGraderPrototypeModel
 
 
@@ -57,6 +58,8 @@ def main(args):
         batch["input_values"] = feature_extractor(batch["audio"]["array"], sampling_rate=batch["audio"]["sampling_rate"]).input_values[0]
         batch["input_ids"] = batch["text"].lower()
         batch["prompt_input_ids"] = batch["prompt"].lower()
+        batch["delivery"] = batch["delivery"]
+        batch["language_use"] = batch["language_use"]
         batch["labels"] = batch["label"]
         return batch
 
@@ -113,19 +116,22 @@ def main(args):
         class_weight = None
 
     # NOTE: define model
+    print("[INFO] Train a {} model from {} ...".format(model_args["model_type"], model_args["model_path"]))
+    model_type = model_args["model_type"]
+    if model_type == "prototype":
+        model = AutoGraderPrototypeModel(model_args, class_weight=class_weight, pretrained=True)
+        if model_args["init_prototypes"]:
+            model.init_prototypes(tr_dataset, path=train_dataset_path)
+    elif model_type == "multi_aspect":
+        model = AutoMAGraderModel(model_args, class_weight=class_weight, pretrained=True).to(device)
+    elif model_type == "baseline":
+        model = AutoGraderModel(model_args, class_weight=class_weight, pretrained=True)
+    else:
+        raise ValueError(f"Invalid model {model_type}")
+    
     if "pretrained_path" in model_args:
         print("[INFO] Load pretrained model from {} ...".format(model_args["pretrained_path"]))
         best_model_path = model_args["pretrained_path"] + "/best"
-        
-        if model_args["model_type"] == 'prototype':
-            model = AutoGraderPrototypeModel(model_args, config=config, text_config=text_config).to(device)
-            # num_labels, num_prototypes, dim
-            prototype = model.get_prototype()
-        elif model_args["model_type"] == "multi_aspect":
-            model = AutoMAGraderModel(model_args, config=config, text_config=text_config).to(device)
-        else:
-            model = AutoGraderModel(model_args, config=config, text_config=text_config).to(device)
-        
         total_params = sum(p.numel() for p in model.parameters())
         loaded_params = total_params
         missing_keys, _ = model.load_state_dict(torch.load(best_model_path+"/pytorch_model.bin", map_location=device), strict=False)
@@ -136,16 +142,6 @@ def main(args):
         # Calculate the ratio of successfully loaded parameters
         success_ratio = loaded_params / total_params
         print("Success Load ratio", success_ratio)        
-    else:
-        print("[INFO] Train a {} model from {} ...".format(model_args["model_type"], model_args["model_path"]))
-        if model_args["model_type"] == "prototype":
-            model = AutoGraderPrototypeModel(model_args, class_weight=class_weight, pretrained=True)
-            if model_args["init_prototypes"]:
-                model.init_prototypes(tr_dataset, path=train_dataset_path)
-        elif model_args["model_type"] == "multi_aspect":
-            model = AutoMAGraderModel(model_args, config=config, text_config=text_config).to(device)
-        else:
-            model = AutoGraderModel(model_args, class_weight=class_weight, pretrained=True)
  
     # print # of parameters
     trainables = [p for p in model.parameters() if p.requires_grad]

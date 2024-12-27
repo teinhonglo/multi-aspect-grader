@@ -9,9 +9,41 @@ from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence, pad_se
 
 import os
 from transformers.models.wav2vec2 import Wav2Vec2PreTrainedModel
+from modules.net_models import MeanPooling, AttentionPooling
+from modules.encoders import TransformerEncoder
+from modules.decoders import TransformerDecoder
+
+class PredictionHead(nn.Module):
+    def __init__(self, config, input_dim=None, output_dim=None):
+        super(PredictionHead, self).__init__()
+        
+        if input_dim is None:
+            input_dim = config.hidden_size
+        if output_dim is None:
+            output_dim = config.num_labels
+
+        self.dense = nn.Linear(input_dim, input_dim)
+
+        self.dropout = nn.Dropout(config.final_dropout)
+        self.linear = nn.Linear(input_dim, output_dim)
+
+    def forward(self, x):
+        x = self.dropout(x)
+        x = self.dense(x)
+        x = torch.tanh(x)
+        x = self.dropout(x)
+        x = self.linear(x)
+        return x
+
+@dataclass
+class ClassifierOutput(ModelOutput):
+    loss: Optional[torch.FloatTensor] = None
+    logits: torch.FloatTensor = None
+    hidden_states: Optional[Tuple[torch.FloatTensor]] = None
+    attentions: Optional[Tuple[torch.FloatTensor]] = None
+    embeds: Optional[torch.FloatTensor] = None
 
 class AutoGraderPrototypeModel(nn.Module):
-
     def __init__(self, model_args, class_weight=None, config=None, pretrained=False):
         super(AutoGraderPrototypeModel, self).__init__()
 
@@ -23,8 +55,12 @@ class AutoGraderPrototypeModel(nn.Module):
                 problem_type=model_args["problem_type"],
                 final_dropout=model_args["final_dropout"]
             )
+            self.text_config = AutoConfig.from_pretrained(
+                model_args["text_model_path"]
+            )
         else:
             self.config = config
+            self.text_config = text_config
 
         # model
         if pretrained:
@@ -50,6 +86,16 @@ class AutoGraderPrototypeModel(nn.Module):
         self.freeze_feature_extractor()
         if "freeze_k_layers" in model_args:
             self.freeze_k_layers(model_args["freeze_k_layers"])
+    
+    def freeze_k_layers(self, k):
+        if k > len(self.model.encoder.layers):
+            k = None
+        
+        for parameter in self.model.encoder.layers[:k].parameters():
+            parameter.requires_grad = False
+
+    def freeze_feature_extractor(self):
+        self.model.feature_extractor._freeze_parameters()
 
     def get_prototype(self):
         return self.prototype.weight.reshape(self.num_labels, self.num_prototypes, -1).detach().cpu()
@@ -180,7 +226,16 @@ class AutoGraderPrototypeModel(nn.Module):
         output_hidden_states=None,
         return_dict=None,
         labels=None,
+        input_ids=None,
+        text_attention_mask=None,
+        prompt_input_ids=None,
+        prompt_attention_mask=None,
+        delivery=None,
+        delivery_mask=None,
+        language_use=None,
+        language_use_mask=None
     ):
+        # wav2vec2
         outputs = self.model(
             input_values,
             attention_mask=attention_mask,
@@ -231,11 +286,11 @@ class AutoGraderPrototypeModel(nn.Module):
             output = (logits,) + outputs[2:]
             return ((loss,) + output) if loss is not None else output
 
-        return SpeechClassifierOutput(
+        return ClassifierOutput(
             loss=loss,
             logits=logits,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
             embeds=hidden_states
-        )        
+        )
 

@@ -6,17 +6,16 @@ stage=1
 # data config
 kfold=5
 folds=`seq 5 $kfold`
-#scores="content pronunciation vocabulary"
-scores="content"
+scores="content pronunciation vocabulary"
 test_book=1
 part=1
-trans_type=0317_trans_stt_tov   # trans_stt_tov -> cls, trans_stt_tov_wod -> reg
+trans_type=trans_stt   # trans_stt_tov -> cls, trans_stt_tov_wod -> reg
 
 # training config
 nj=4
 gpuid=0
-train_conf=conf/train_teemi_baseline_cls_data2vec.json
-suffix=_clsw0.95
+train_conf=conf/train_teemi_baseline_cls_wav2vec2.json
+suffix=
 
 # eval config
 bins=""    # for cls
@@ -48,7 +47,6 @@ if [ $stage -le 0 ]; then
             done
         done
     done
-    exit 0
 fi
 
 if [ $stage -le 1 ]; then
