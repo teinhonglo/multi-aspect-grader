@@ -63,7 +63,7 @@ class Attention(nn.Module):
         if mask is not None:
             attn = attn.masked_fill(
                 mask.unsqueeze(1).unsqueeze(2),
-                -1e9,
+                -1e4,
             )
 
         self.attn_weights = attn.clone()

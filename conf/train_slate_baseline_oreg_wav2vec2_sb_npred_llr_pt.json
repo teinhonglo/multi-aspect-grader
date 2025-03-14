@@ -1,0 +1,32 @@
+[ 
+  {
+    "per_device_train_batch_size": 16,
+    "gradient_accumulation_steps": 2,
+    "per_device_eval_batch_size": 8,
+    "evaluation_strategy": "steps",
+    "num_train_epochs": 20,
+    "save_steps": 50,
+    "eval_steps": 50,
+    "logging_steps": 50,
+    "learning_rate": 1e-5,
+    "weight_decay": 0,
+    "warmup_steps": 600,
+    "save_total_limit": 1,
+    "metric_for_best_model": "rmse",
+    "greater_is_better": false
+  },
+  {
+    "pretrained_path": "exp/slate-p4/trans_stt_whisper_large_v2_multi_aspect/train_slate_baseline_at_reg_wav2vec2_bert_sb_npred_llr/holistic/1",
+    "model_path" : "facebook/wav2vec2-base",
+    "text_model_path" : "bert-base-uncased",
+    "problem_type": "oridnal_regression",
+    "task_type": "grader",
+    "pred_head": "norm_head",
+    "num_labels": 1,
+    "model_type": "baseline",
+    "pool_type": "attn",
+    "class_weight_alpha": 0.0,
+    "final_dropout": 0.0,
+    "freeze_k_layers": 24
+  }
+]

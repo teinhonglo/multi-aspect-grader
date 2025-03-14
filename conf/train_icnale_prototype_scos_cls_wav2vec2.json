@@ -3,7 +3,7 @@
     "gradient_accumulation_steps": 2,
     "per_device_eval_batch_size": 8,
     "evaluation_strategy": "steps",
-    "num_train_epochs": 30,
+    "num_train_epochs": 10,
     "save_steps": 100,
     "eval_steps": 100,
     "logging_steps": 50,
@@ -21,8 +21,11 @@
     "problem_type": "single_label_classification",
     "task_type": "grader",
     "num_labels": 5,
-    "model_type": "baseline",
-    "pool_type": "attn",
+    "num_prototypes": 3,
+    "init_prototypes": false,
+    "model_type": "prototype",
+    "dist": "scos",
+    "pool_type": "mean",
     "class_weight_alpha": 0.0,
     "final_dropout": 0.1
   }

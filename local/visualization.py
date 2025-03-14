@@ -32,6 +32,10 @@ parser.add_argument("--labels",
                     default="pre-A,A1,A1A2,A2,A2B1,B1,B1B2,B2",
                     type=str)
 
+parser.add_argument("--test_set",
+                    default="dev",
+                    type=str)
+
 parser.add_argument("--merge-speaker",
                     action="store_true")
 
@@ -40,6 +44,7 @@ args = parser.parse_args()
 result_root = args.result_root
 scores = args.scores.split()
 folds = args.folds.split()
+test_set = args.test_set
 bins = np.array([ float(ab) for ab in args.bins.split(",")]) if args.bins else None
 labels = args.labels.split(",")
 suffix = ".spk" if args.merge_speaker else ""
@@ -50,8 +55,8 @@ for score in scores:
     all_labels = []
 
     # take all preds, labels in predictions.txt
-    path = result_root + '/' + score
-    with open(path + "/predictions{}.txt".format(suffix), "r") as rf:
+    output_dir = result_root + '/' + score + "/" + test_set
+    with open(output_dir + "/predictions{}.txt".format(suffix), "r") as rf:
         for line in rf.readlines():
             result = line.strip().split(" ")
             id, pred, label = result[0], result[1], result[2]
@@ -59,8 +64,7 @@ for score in scores:
             all_labels.append(float(label))
 
     # cal confusion matrix
-    file_name = os.path.join(result_root, score)
-    png_name = file_name + "{}.png".format(suffix)
+    png_name = f"{output_dir}/{score}{suffix}.png"
     all_preds = np.array(all_preds)
     all_labels = np.array(all_labels)
 

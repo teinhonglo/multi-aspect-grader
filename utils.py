@@ -30,7 +30,7 @@ def cal_class_weight(labels, n_classes, alpha=1.0, epsilon=1e-5, loss_weight_typ
         class_ratio = class_ratio / np.sum(class_ratio)
         class_weight = np.power(class_ratio, alpha) / np.sum(
             np.power(class_ratio, alpha)) / (class_ratio + epsilon)
-    if loss_weight_type == 2:
+    elif loss_weight_type == 2:
         # normal re-weighting
         labels = np.array(labels)
         n_samples = len(labels)
@@ -101,7 +101,7 @@ def make_dataset(data_json, model_args, do_augment=False):
         return dataset
 
 @dataclass
-class DataCollatorCTCWithPadding:
+class DataCollatorWithPadding:
     feature_extractor: AutoFeatureExtractor
     tokenizer: AutoTokenizer
     task_type: str
@@ -126,6 +126,7 @@ class DataCollatorCTCWithPadding:
             max_length=self.max_length,
             pad_to_multiple_of=self.pad_to_multiple_of,
             return_tensors="pt",
+            return_attention_mask=True,
         )
         batch["labels"] = torch.tensor(label_features, dtype=d_type)
 
@@ -155,20 +156,28 @@ class DataCollatorCTCWithPadding:
         
         if "delivery" in features[0]:
             # delivery (word-level sequence)
-            delivery = [torch.tensor(feature["delivery"]) for feature in features]
-            delivery = pad_sequence(delivery, batch_first=True, padding_value=0)
-            delivery_mask = ~(delivery == 0).all(dim=2)
-            delivery_mask = delivery_mask.long()
-            batch["delivery"] = delivery
-            batch["delivery_mask"] = delivery_mask
+            try:
+                delivery = [torch.tensor(feature["delivery"]) for feature in features]
+                delivery = pad_sequence(delivery, batch_first=True, padding_value=-1)
+                delivery_mask = ~(delivery == -1).all(dim=2)
+                delivery_mask = delivery_mask.long()
+                batch["delivery"] = delivery
+                batch["delivery_mask"] = delivery_mask
+            except:
+                batch["delivery"] = None
+                batch["delivery_mask"] = None
             
         if "language_use" in features[0]:
             # language use (token-level sequence)
-            language_use = [torch.tensor(feature["language_use"]) for feature in features]
-            language_use = pad_sequence(language_use, batch_first=True, padding_value=0)
-            language_use_mask = ~(language_use == 0).all(dim=2)
-            language_use_mask = language_use_mask.long()
-            batch["language_use"] = language_use
-            batch["language_use_mask"] = language_use_mask
+            try:
+                language_use = [torch.tensor(feature["language_use"]) for feature in features]
+                language_use = pad_sequence(language_use, batch_first=True, padding_value=-1)
+                language_use_mask = ~(language_use == -1).all(dim=2)
+                language_use_mask = language_use_mask.long()
+                batch["language_use"] = language_use
+                batch["language_use_mask"] = language_use_mask
+            except:
+                batch["language_use"] = None
+                batch["language_use_mask"] = None
 
         return batch

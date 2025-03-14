@@ -16,9 +16,9 @@ from collections import defaultdict
 # local import
 from utils import make_dataset, load_from_json
 from metrics_np import compute_metrics
-from models.baselines import AutoGraderModel
+from models.baselines import AutoGraderModel, AutoTextGraderModel, AutoAudioTextGraderModel
 from models.multi_aspects import AutoMAGraderModel
-from models.prototypes import AutoGraderPrototypeModel
+from models.prototypes import AutoGraderPrototypeModel, AutoGraderPrototypeRegModel
 
 def embed_json(results, json_path):
     embed_dict = defaultdict(dict)
@@ -73,10 +73,18 @@ def main(args):
         model = AutoGraderPrototypeModel(model_args, config=config, text_config=text_config).to(device)
         # num_labels, num_prototypes, dim
         prototype = model.get_prototype()
+    elif model_type == 'prototype_ref':
+        model = AutoGraderPrototypeRegModel(model_args, config=config, text_config=text_config).to(device)
+        # num_labels, num_prototypes, dim
+        prototype = model.get_prototype()
     elif model_type == "multi_aspect":
         model = AutoMAGraderModel(model_args, config=config, text_config=text_config).to(device)
     elif model_type == "baseline":
         model = AutoGraderModel(model_args, config=config, text_config=text_config).to(device)
+    elif model_type == "baseline_text":
+        model = AutoTextGraderModel(model_args, config=config, text_config=text_config).to(device)
+    elif model_type == "baseline_audio_text":
+        model = AutoAudioTextGraderModel(model_args, config=config, text_config=text_config).to(device)
     else:
     	raise ValueError(f"Invalid model {model_type}")
     model.load_state_dict(torch.load(best_model_path+"/pytorch_model.bin", map_location=device))
@@ -94,10 +102,16 @@ def main(args):
         return batch
 
     # test set
-    model_name = "-".join(model_args["model_path"].split("/"))
+    model_type = model_args["model_type"]
+    if model_type in [ "baseline_text" ]:
+        model_name = "-".join(model_args["text_model_path"].split("/"))
+    else:
+        model_name = "-".join(model_args["model_path"].split("/"))
+    
     test_basename = os.path.basename(args.test_json).split('.')[0]
     test_basename += "_tts" if model_args["task_type"] == "mdd-tts" else ""
     test_dataset_path = os.path.dirname(args.test_json) + "/{}/{}_dataset".format(model_name,test_basename)
+    
     if not os.path.exists(test_dataset_path + "/dataset.arrow"):
         print("[INFO] Loading data from {} ...".format(args.test_json))
         te_dataset = make_dataset(args.test_json, model_args)
@@ -123,11 +137,13 @@ def main(args):
                             delivery=delivery,
                             language_use=language_use,
                             return_dict=True)
-            elif model_type in ["baseline", "prototype"]:
+            elif model_type in ["baseline", "prototype", "prototype_reg", "baseline_text", "baseline_audio_text"]:
                 output = model( input_values=input_values, 
                             input_ids=input_ids, 
                             prompt_input_ids=prompt_input_ids, 
                             return_dict=True)
+            else:
+                raise Exception(f"{model_type} is not defined")
 
             logits = output.logits
             embed = output.embeds
@@ -156,7 +172,10 @@ def main(args):
     print("{}".format(results["label"]))
 
     # write predictions
-    predictions_file = os.path.join(args.exp_dir, "predictions.txt")
+    output_dir = os.path.join(args.exp_dir, args.test_set)
+    os.makedirs(output_dir, exist_ok=True)
+    
+    predictions_file = os.path.join(output_dir, "predictions.txt")
     with open(predictions_file, 'w') as wf:
         for i in range(len(results)):
             wf.write("{} {} {} \n".format( \
@@ -164,7 +183,7 @@ def main(args):
             )
 
     # write embeds json
-    embeds_file = os.path.join(args.exp_dir, "embeds.json")
+    embeds_file = os.path.join(output_dir, "embeds.json")
     #embed_json(results, embeds_file)
     # write proto json
     #if model_args["model_type"] == 'prototype':
@@ -179,6 +198,7 @@ if __name__ == "__main__":
     parser.add_argument('--train-conf', type=str)
     parser.add_argument('--model-path', type=str, default="facebook/wav2vec2-base")
     parser.add_argument('--exp-dir', type=str)
+    parser.add_argument('--test-set', type=str)
     parser.add_argument('--nj', type=int, default=4)
     args = parser.parse_args()
 

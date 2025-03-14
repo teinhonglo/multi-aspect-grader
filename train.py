@@ -10,15 +10,17 @@ import torchaudio
 from transformers import AutoConfig, AutoFeatureExtractor, AutoTokenizer
 from transformers import TrainingArguments, Trainer
 from datasets import load_from_disk
+import matplotlib.pyplot as plt
 
 import numpy as np
+np.set_printoptions(threshold=100)
 
 # local import
-from utils import make_dataset, DataCollatorCTCWithPadding, cal_class_weight, load_from_json, save_to_json
+from utils import make_dataset, DataCollatorWithPadding, cal_class_weight, load_from_json, save_to_json
 from metrics_np import compute_metrics
-from models.baselines import AutoGraderModel
+from models.baselines import AutoGraderModel, AutoTextGraderModel, AutoAudioTextGraderModel
 from models.multi_aspects import AutoMAGraderModel
-from models.prototypes import AutoGraderPrototypeModel
+from models.prototypes import AutoGraderPrototypeModel, AutoGraderPrototypeRegModel
 
 
 def main(args):
@@ -55,7 +57,13 @@ def main(args):
     # NOTE: data preprocess
     def preprocess_function(batch):
         # extract features return input_values
-        batch["input_values"] = feature_extractor(batch["audio"]["array"], sampling_rate=batch["audio"]["sampling_rate"]).input_values[0]
+        try:
+            # wav2vec (ssl features)
+            batch["input_values"] = feature_extractor(batch["audio"]["array"], sampling_rate=batch["audio"]["sampling_rate"]).input_values[0]
+        except:
+            # whisper
+            batch["input_values"] = feature_extractor(batch["audio"]["array"], sampling_rate=batch["audio"]["sampling_rate"]).input_features[0]
+            
         batch["input_ids"] = batch["text"].lower()
         batch["prompt_input_ids"] = batch["prompt"].lower()
         batch["delivery"] = batch["delivery"]
@@ -63,11 +71,15 @@ def main(args):
         batch["labels"] = batch["label"]
         return batch
 
-    model_name = "-".join(model_args["model_path"].split("/"))
+    model_type = model_args["model_type"]
+    if model_type in [ "baseline_text" ]:
+        model_name = "-".join(model_args["text_model_path"].split("/"))
+    else:
+        model_name = "-".join(model_args["model_path"].split("/"))
     # train set
     train_basename = os.path.basename(args.train_json).split('.')[0]
     train_basename += "_tts" if model_args["task_type"] == "mdd-tts" else ""
-    train_dataset_path = os.path.dirname(args.train_json) + "/{}/{}_dataset".format(model_name,train_basename)
+    train_dataset_path = os.path.dirname(args.train_json) + "/{}/{}_dataset".format(model_name, train_basename)
     
     if not os.path.exists(train_dataset_path + "/dataset.arrow"):
         print("[INFO] Loading data from {} ...".format(args.train_json))
@@ -81,7 +93,7 @@ def main(args):
     # valid set
     valid_basename = os.path.basename(args.valid_json).split('.')[0]
     valid_basename += "_tts" if model_args["task_type"] == "mdd-tts" else ""
-    valid_dataset_path = os.path.dirname(args.valid_json) + "/{}/{}_dataset".format(model_name,valid_basename)
+    valid_dataset_path = os.path.dirname(args.valid_json) + "/{}/{}_dataset".format(model_name, valid_basename)
     if not os.path.exists(valid_dataset_path + "/dataset.arrow"):
         print("[INFO] Loading data from {} ...".format(args.valid_json))
         cv_dataset = make_dataset(args.valid_json, model_args)
@@ -92,7 +104,7 @@ def main(args):
         cv_dataset = load_from_disk(valid_dataset_path)
 
     # data collator
-    data_collator = DataCollatorCTCWithPadding(
+    data_collator = DataCollatorWithPadding(
         feature_extractor=feature_extractor, 
         tokenizer=text_tokenizer,
         problem_type=model_args["problem_type"], 
@@ -122,10 +134,18 @@ def main(args):
         model = AutoGraderPrototypeModel(model_args, class_weight=class_weight, pretrained=True)
         if model_args["init_prototypes"]:
             model.init_prototypes(tr_dataset, path=train_dataset_path)
+    elif model_type == "prototype_reg":
+        model = AutoGraderPrototypeRegModel(model_args, class_weight=class_weight, pretrained=True)
+        if model_args["init_prototypes"]:
+            model.init_prototypes(tr_dataset, path=train_dataset_path)
     elif model_type == "multi_aspect":
         model = AutoMAGraderModel(model_args, class_weight=class_weight, pretrained=True).to(device)
     elif model_type == "baseline":
         model = AutoGraderModel(model_args, class_weight=class_weight, pretrained=True)
+    elif model_type == "baseline_text":
+        model = AutoTextGraderModel(model_args, class_weight=class_weight, pretrained=True)
+    elif model_type == "baseline_audio_text":
+        model = AutoAudioTextGraderModel(model_args, class_weight=class_weight, pretrained=True)
     else:
         raise ValueError(f"Invalid model {model_type}")
     
@@ -166,9 +186,9 @@ def main(args):
 
         print("\n\n")
         print("predictions:")
-        print("{}".format(preds))
+        print(f"{preds}")
         print("labels:")
-        print("{}".format(labels))
+        print(f"{labels}")
         print("\n\n")
 
         # metrics
@@ -204,6 +224,21 @@ def main(args):
     # save the best model
     best_path = os.path.join(args.exp_dir, 'best')
     trainer.save_model(best_path)
+    
+    for loss in [ "loss" ]:
+        train_losses = [log[loss] for log in trainer.state.log_history if loss in log]
+        eval_losses = [log[f"eval_{loss}"] for log in trainer.state.log_history if f"eval_{loss}" in log]
+        steps = list(range(1, len(train_losses) + 1))
+        
+        plt.figure(figsize=(10,5))
+        plt.plot(steps, train_losses, label="Training Loss")
+        plt.plot(steps, eval_losses, label="Validation Loss", linestyle="--")
+        plt.xlabel("Steps")
+        plt.ylabel("Loss")
+        plt.title(f"Training and Validation Loss Curve ({loss})")
+        plt.legend()
+        
+        plt.savefig(f"{args.exp_dir}/{loss}.png", dpi=300, bbox_inches='tight')
 
 
 if __name__ == "__main__":

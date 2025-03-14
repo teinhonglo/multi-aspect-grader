@@ -44,47 +44,17 @@ multi_aspect_json_file = args.multi_aspect_json_file
 if not os.path.isdir(dst_data_dir):
     os.makedirs(dst_data_dir)
 
-prompt_info_fn = "/share/corpus/2023_teemiv2/prompts.json"
-with open(prompt_info_fn, "r") as fn:
-    prompt_info = json.load(fn)
-
-def add_prompt_info(src_json_dict, multi_aspect_dict):
-    src_json_keys = list(src_json_dict.keys())
-    json_dict = {sjk: [] for sjk in src_json_keys}
+def add_prompt_info(json_dict, multi_aspect_dict):
     json_dict["prompt"] = []
     json_dict["delivery"] = []
     json_dict["language_use"] = []
 
-    for i, uttid in enumerate(src_json_dict["id"]):
-        if uttid not in multi_aspect_dict: continue
+    for uttid in json_dict["id"]:
+        info = uttid.split("_")
+        prompt = "SLATE"
         
-        # B08_u3024_t68_p25_i61_2-1_20231012
-        info = uttid.split("-")
-        # A08_01
-        item_id = info[0].split("_")[0]
-        sub_item_id = info[1].split("_")[0]
-        prompt_id = f"{item_id}_0{sub_item_id}"
-        prompt = []
-
-        if prompt_id in prompt_info:
-            if "description" in prompt_info[prompt_id]:
-                prompt.append(prompt_info[prompt_id]["description"])
-            
-            if "question" in prompt_info[prompt_id]:
-                prompt.append(prompt_info[prompt_id]["question"])
-            
-            prompt = " ".join(prompt)    
-        else:
-            raise ValueError(prompt_id)
-        
-        delivery = multi_aspect_dict[uttid]["delivery"]
-        language_use = multi_aspect_dict[uttid]["language_use"]
-        
-        if len(delivery) == 0 or len(language_use) == 0 or len(prompt) == 0:
-            continue
-        
-        for sjk in src_json_keys:
-            json_dict[sjk].append(src_json_dict[sjk][i])
+        delivery = [] #multi_aspect_dict[uttid]["delivery"]
+        language_use = [] #multi_aspect_dict[uttid]["language_use"]
         
         json_dict["prompt"].append(prompt)
         json_dict["delivery"].append(delivery)

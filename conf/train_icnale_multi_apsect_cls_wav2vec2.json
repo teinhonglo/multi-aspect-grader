@@ -3,7 +3,7 @@
     "gradient_accumulation_steps": 2,
     "per_device_eval_batch_size": 8,
     "evaluation_strategy": "steps",
-    "num_train_epochs": 10,
+    "num_train_epochs": 30,
     "save_steps": 100,
     "eval_steps": 100,
     "logging_steps": 50,
@@ -22,6 +22,7 @@
     "task_type": "grader",
     "num_labels": 5,
     "model_type": "multi_aspect",
+    "pool_type": "attn",
     "class_weight_alpha": 0.0,
     "final_dropout": 0.1
   }
