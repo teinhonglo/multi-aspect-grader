@@ -73,9 +73,6 @@ def predictions_to_list(predictions_file, merge_speaker=False, bins=""):
     for id, pred in pred_dict.items():
         pred = sum(pred) / len(pred)
         
-        if not bins:
-            pred = np.round(pred)
-        
         label = sum(label_dict[id]) / len(label_dict[id])
         ids.append(id)
         preds.append(pred)
