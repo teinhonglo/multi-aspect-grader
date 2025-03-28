@@ -73,7 +73,7 @@ def main(args):
         model = AutoGraderPrototypeModel(model_args, config=config, text_config=text_config).to(device)
         # num_labels, num_prototypes, dim
         prototype = model.get_prototype()
-    elif model_type == 'prototype_ref':
+    elif model_type == 'prototype_reg':
         model = AutoGraderPrototypeRegModel(model_args, config=config, text_config=text_config).to(device)
         # num_labels, num_prototypes, dim
         prototype = model.get_prototype()
@@ -148,7 +148,7 @@ def main(args):
             logits = output.logits
             embed = output.embeds
 
-        if config.problem_type == "single_label_classification":
+        if config.problem_type in ["single_label_classification", "cdw_ce_loss", "test_time_adaptation"]:
             pred_ids = torch.argmax(logits, dim=-1) + 1
         else:
             pred_ids = logits
@@ -172,7 +172,8 @@ def main(args):
     print("{}".format(results["label"]))
 
     # write predictions
-    output_dir = os.path.join(args.exp_dir, args.test_set)
+    test_basename = os.path.basename(args.test_json).split('.')[0]
+    output_dir = os.path.join(args.exp_dir, test_basename)
     os.makedirs(output_dir, exist_ok=True)
     
     predictions_file = os.path.join(output_dir, "predictions.txt")

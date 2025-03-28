@@ -38,6 +38,7 @@ def main(args):
     # show the model_args
     print("[NOTE] Model args ...")
     print(json.dumps(model_args, indent=4))
+    assert model_args["problem_type"] == "test_time_adaptation"
 
     # load the feature extractor of wav2vec2 
     feature_extractor = AutoFeatureExtractor.from_pretrained(
@@ -181,6 +182,30 @@ def main(args):
         # Calculate the ratio of successfully loaded parameters
         success_ratio = loaded_params / total_params
         print("[INFO] Success Load Ratio:", success_ratio)  
+        
+    if model_args["problem_type"] == "test_time_adaptation":
+        # for regression
+        print("[INFO] Initialize mean and var (regression) ...")
+        tr_labels = torch.tensor(tr_dataset['labels'])
+        
+        def compute_embeddings(batch):
+            input_values = torch.as_tensor(batch["input_values"], device=device).unsqueeze(0).to(device)
+            with torch.no_grad():
+                outputs = model(input_values=input_values, return_dict=True)
+                hidden_states = outputs.embeds
+                batch["embed"] = hidden_states
+            
+            return batch
+        # compute all embeddings
+        model = model.to(device)
+        model.eval()
+        tr_result = tr_dataset.map(compute_embeddings)
+        tr_vector = torch.tensor(tr_result["embed"])
+        print(f"tr_labels {tr_vector.shape}")
+        tr_vector_mean = torch.mean(tr_vector, dim=0).squeeze(0)
+        tr_vector_var = torch.var(tr_vector, dim=0).squeeze(0)
+        print(f"mean {tr_vector_mean.shape} and var {tr_vector_var.shape}")
+        model.init_mean_var(tr_vector_mean, tr_vector_var)
  
     # print # of parameters
     trainables = [p for p in model.parameters() if p.requires_grad]
@@ -199,7 +224,7 @@ def main(args):
         # NOTE: teemi: 0-8 to 1-9
         preds = pred.predictions
         
-        if model_args["problem_type"] in ["single_label_classification", "cdw_ce_loss"]:
+        if model_args["problem_type"] in ["single_label_classification", "test_time_adaptation"]:
             preds = np.argmax(preds, axis=1) + 1
         else:
             preds = preds
@@ -228,15 +253,26 @@ def main(args):
         **train_args
     )
 
-    trainer = Trainer(
-        model=model,
-        data_collator=data_collator,
-        args=training_args,
-        compute_metrics=calculate_metrics,
-        train_dataset=tr_dataset,
-        eval_dataset=cv_dataset,
-        tokenizer=feature_extractor,
-    )
+    if model_args["problem_type"] == "test_time_adaptation":
+        trainer = Trainer(
+            model=model,
+            data_collator=data_collator,
+            args=training_args,
+            compute_metrics=calculate_metrics,
+            train_dataset=cv_dataset,
+            eval_dataset=cv_dataset,
+            tokenizer=feature_extractor,
+        )
+    else:
+        trainer = Trainer(
+            model=model,
+            data_collator=data_collator,
+            args=training_args,
+            compute_metrics=calculate_metrics,
+            train_dataset=tr_dataset,
+            eval_dataset=cv_dataset,
+            tokenizer=feature_extractor,
+        )
 
     if glob.glob(os.path.join(args.exp_dir, 'checkpoint*')):
         trainer.train(resume_from_checkpoint=True)

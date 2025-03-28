@@ -2,7 +2,7 @@
 # data config
 kfold=1
 folds=`seq 1 $kfold`
-scores="holistic"
+scores="holistic_cls"
 tsv_root="data-speaking/slate-p1/trans_stt_whisper_large_v2"
 src_json_root="data-json/slate-p1/trans_stt_whipser_large_v2"
 json_root="data-json/slate-p1/trans_stt_whisper_large_v2_multi_aspect"
@@ -11,7 +11,7 @@ multi_aspect_json_file="/share/nas167/teinhonglo/AcousticModel/spoken_test/asr-e
 # training config
 nj=4
 gpuid=1
-train_conf=conf/train_slate_baseline_reg_wav2vec2.json
+train_conf=conf/train_slate_baseline_cls_wav2vec2_tta_from_p4.json
 suffix=
 
 # eval bins config
@@ -70,7 +70,7 @@ if [ $stage -le 1 ] && [ $stop_stage -ge 1 ]; then
             fi
 
             CUDA_VISIBLE_DEVICES="$gpuid" \
-                python train.py \
+                python train_tta.py \
                     --bins $bins \
                     --train-conf $train_conf \
                     --train-json $json_root/$score/$fd/train.json \
@@ -92,6 +92,12 @@ if [ $stage -le 2 ] && [ $stop_stage -ge 2 ]; then
                         --exp-dir $exp_root/$score/$fd \
                         --test-set $test_set \
                         --nj $nj || exit 1
+                
+                # convert to regression
+                python convert_report.py --bins "$bins" \
+                    --result_root $exp_root \
+                    --scores "$scores" --folds "$folds" \
+                    --test_set $test_set
             done
         done
     done

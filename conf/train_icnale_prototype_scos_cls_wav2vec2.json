@@ -20,6 +20,7 @@
     "text_model_path" : "bert-base-uncased",
     "problem_type": "single_label_classification",
     "task_type": "grader",
+    "loss_type": "ce",
     "num_labels": 5,
     "num_prototypes": 3,
     "init_prototypes": false,

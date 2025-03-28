@@ -6,6 +6,7 @@ from transformers.file_utils import ModelOutput
 from transformers import AutoModel, AutoConfig
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence, pad_sequence
+import torch.nn.functional as F
 
 import os
 from transformers.models.wav2vec2 import Wav2Vec2PreTrainedModel
@@ -13,6 +14,9 @@ from transformers.models.bert import BertPreTrainedModel
 from modules.net_models import MeanPooling, AttentionPooling
 from modules.encoders import TransformerEncoder
 from modules.decoders import TransformerDecoder
+from sklearn.preprocessing import StandardScaler
+import numpy as np
+from losses import OrdinalRegressionLoss, CumulativeLinkLoss
 
 class PredictionHead(nn.Module):
     def __init__(self, config, input_dim=None, output_dim=None):
@@ -343,19 +347,21 @@ class AutoGraderPrototypeRegModel(Wav2Vec2PreTrainedModel):
         print(f"Num prototypes {self.num_prototypes} and Num cefr {self.num_cefr_levels}")
         self.prototype = nn.Embedding(self.num_cefr_levels * self.num_prototypes, self.model.config.hidden_size)
         self.dist = model_args["dist"]
+        self.use_softmax = True if "use_softmax" not in model_args else model_args["use_softmax"]
+        print(f"use_softmax {self.use_softmax}")
+        
         if self.dist == "scos":
             self.w = nn.Parameter(torch.tensor(10.0))
             self.b = nn.Parameter(torch.tensor(-5.0))
-        self.num_cefr_levels = model_args["num_cefr_levels"]
+        self.softmax = nn.Softmax(dim=1)
         
-        input_dim = self.config.hidden_size + self.num_prototypes * self.num_cefr_levels
+        input_dim = self.config.hidden_size + self.num_cefr_levels
         if self.pred_head == "default":
             # prediction head
             self.prediction_head = PredictionHead(config=self.config, 
                                                   input_dim=input_dim)
         elif self.pred_head == "norm_head":
             self.prediction_head = nn.Sequential(nn.LayerNorm(input_dim), nn.Dropout(self.config.final_dropout), nn.Linear(input_dim, self.config.num_labels))
-        
 
         # other
         if self.config.num_labels != 1:
@@ -369,8 +375,10 @@ class AutoGraderPrototypeRegModel(Wav2Vec2PreTrainedModel):
         if "freeze_k_layers" in model_args:
             self.freeze_k_layers(model_args["freeze_k_layers"])
         
-        if self.config.problem_type == "oridnal_regression":
-            self.loss_ode_fct = OridinalEntropy(lambda_d_phn=1.0, lambda_t_phn=1.0, margin=1.0, ignore_index=-1)
+        if self.config.problem_type == "ordinal_regression":
+            self.loss_odr_fct = OrdinalRegressionLoss(num_class=8, train_cutpoints=False, scale=20.0)
+        elif self.config.problem_type == "cumulative_link_loss":
+            self.loss_cll_fct = CumulativeLinkLoss()
     
     def freeze_k_layers(self, k):
         if k > len(self.model.encoder.layers):
@@ -400,8 +408,11 @@ class AutoGraderPrototypeRegModel(Wav2Vec2PreTrainedModel):
 
             def compute_embeddings(batch):
                 input_values = torch.as_tensor(batch["input_values"], device=device).unsqueeze(0)
-                # NOTE: for slate, 0-7, +1, 1-8 (minus 1 after this operation) 
-                labels = torch.as_tensor(batch["labels"] * 2 - 4, dtype=torch.long) + 1
+                if self.num_cefr_levels == 8:
+                    # NOTE: for slate, 0-7, +1, 1-8 (minus 1 after this operation) 
+                    labels = torch.as_tensor(batch["labels"] * 2 - 4, dtype=torch.long) + 1
+                elif self.num_cefr_levels == 4:
+                    labels = torch.as_tensor(batch["labels"], dtype=torch.long) -2 + 1
 
                 with torch.no_grad():
                     outputs = self.model(input_values)
@@ -421,10 +432,15 @@ class AutoGraderPrototypeRegModel(Wav2Vec2PreTrainedModel):
 
             # avg same level embeddings
             # NOTE: for slate, 0-7
-            tr_labels = torch.as_tensor(tr_dataset['labels'], dtype=torch.long) * 2 - 4
+            tr_labels = torch.as_tensor(tr_dataset['labels'], dtype=torch.float)
             for lv in range(self.num_cefr_levels):
-                lv_num = torch.count_nonzero((tr_labels == lv)) + eps
-                print(lv_num, lv, prototype_initials[lv])
+                if self.num_cefr_levels == 8:
+                    lv_val = (lv + 4) / 2
+                    lv_num = torch.count_nonzero((tr_labels == lv_val)) + eps
+                elif self.num_cefr_levels == 4:
+                    lv_val = lv + 2
+                    lv_num = ((tr_labels >= lv_val) & (tr_labels <= (lv_val + 0.5))).sum().item() + eps
+                print(lv, lv_val, lv_num)
                 prototype_initials[lv] = prototype_initials[lv] / lv_num
                 
             # add noise
@@ -432,9 +448,28 @@ class AutoGraderPrototypeRegModel(Wav2Vec2PreTrainedModel):
             prototype_initials = prototype_initials.repeat(self.num_prototypes, 1) # repeat num_prototypes in dim 1
             noise = (var ** 0.5) * torch.randn(prototype_initials.size())
             prototype_initials = prototype_initials + noise  # Add Gaussian noize
+            # save embeddings
+            torch.save(prototype_initials, embed_path)
+
+        else:
+            print("[INFO] {} exists, using it...".format(embed_path))
+            prototype_initials = torch.load(embed_path)
 
         self.prototype.weight = nn.Parameter(prototype_initials)
         #nn.init.orthogonal_(self.prototype.weight)  # Make prototype vectors orthogonal
+        
+    def init_scaler(self, tr_dataset):
+        # for regression
+        print("[INFO] Initialize scalar (regression) ...")
+        tr_labels = np.array(tr_dataset['labels'])
+        scaler = StandardScaler()
+        self.scaler = scaler.fit(tr_labels.reshape(-1, 1))
+    
+    def init_mean_var(self, tr_vector_mean, tr_vector_var):
+        # for regression
+        print("[INFO] Initialize mean and var ...")
+        self.tr_vector_mean = tr_vector_mean
+        self.tr_vector_var = tr_vector_var
     
     def negative_sed(self, a, b):
         ''' negative square euclidean distance
@@ -504,6 +539,27 @@ class AutoGraderPrototypeRegModel(Wav2Vec2PreTrainedModel):
 
         return logits
 
+    def pairwise_ranking_loss(self, preds, targets, margin=0.0):
+        """
+        Simple pairwise ranking loss (RankNet style) to encourage correct ordering.
+        preds: Tensor of shape (B,)
+        targets: Tensor of shape (B,)
+        """
+        B = preds.size(0)
+        loss = 0.0
+        count = 0
+        for i in range(B):
+            for j in range(B):
+                if targets[i] > targets[j] + margin:
+                    pred_diff = preds[i] - preds[j]
+                    loss += F.logsigmoid(pred_diff)  # log(sigmoid(pred_i - pred_j))
+                    count += 1
+        if count > 0:
+            loss = -loss / count  # take mean and flip to loss
+        else:
+            loss = torch.tensor(0.0, device=preds.device)
+        return loss
+
     def forward(self,
         input_values,
         attention_mask=None,
@@ -537,7 +593,6 @@ class AutoGraderPrototypeRegModel(Wav2Vec2PreTrainedModel):
          
         # response (audio)
         padding_mask = self._get_feature_vector_attention_mask(hidden_states.shape[1], attention_mask)
-        #hidden_states = torch.cat([hidden_states, text_hidden_states], dim=-1)
         expand_padding_mask = padding_mask.unsqueeze(-1).repeat(1, 1, hidden_states.shape[2])
         hidden_states[~expand_padding_mask] = 0.0
         
@@ -545,7 +600,8 @@ class AutoGraderPrototypeRegModel(Wav2Vec2PreTrainedModel):
             hidden_states, _ = self.speech_pool(x=hidden_states, attn=hidden_states, mask=padding_mask)
         elif self.pool_type == "mean":
             hidden_states, _ = self.speech_pool(x=hidden_states, mask=padding_mask)
-        
+       
+        B, H = hidden_states.shape 
         # calculate distance
         if self.dist == "sed":
             proto_logits = self.negative_sed(hidden_states, self.prototype.weight)
@@ -557,8 +613,13 @@ class AutoGraderPrototypeRegModel(Wav2Vec2PreTrainedModel):
             proto_logits = self.cosine_sim(hidden_states, self.prototype.weight, scale=True)
         else:
             raise ValueError("dist choices [sed, cos], {} is provided.".format(self.dist))
-        
-        hidden_states = torch.cat([hidden_states, proto_logits])
+     
+        proto_logits = proto_logits.view(B, self.num_cefr_levels) 
+        if self.use_softmax: 
+            proto_logits_softmax = self.softmax(proto_logits)
+            hidden_states = torch.cat([hidden_states, proto_logits_softmax], dim=-1)
+        else:
+            hidden_states = torch.cat([hidden_states, proto_logits], dim=-1)
         
         logits = self.prediction_head(hidden_states)
         
@@ -571,7 +632,6 @@ class AutoGraderPrototypeRegModel(Wav2Vec2PreTrainedModel):
             elif self.config.problem_type == "single_label_classification":
                 loss_fct = CrossEntropyLoss(weight=self.class_weight)
                 # labels 1-8 to 0-7
-                # NOTE: teemi: 1-9 to 0-8
                 labels = labels - 1
                 loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
             elif self.config.problem_type == "multi_label_classification":
@@ -584,12 +644,74 @@ class AutoGraderPrototypeRegModel(Wav2Vec2PreTrainedModel):
                 cefr_labels = torch.floor(labels)
                 loss_cefr = loss_fct(logits, cefr_labels)
                 loss = loss + 0.5 * loss_cefr
-            elif self.config.problem_type == "oridnal_regression":
+            elif self.config.problem_type == "ordinal_regression":
+                logits = logits.squeeze(-1)
+                labels = ((labels - 2.0) * 2).long()
+                loss_ode = self.loss_odr_fct(logits, labels)
+                loss = loss_ode
+            elif self.config.problem_type == "prototype_regression":
                 loss_fct = MSELoss()
                 logits = logits.squeeze(-1)
                 loss = loss_fct(logits, labels)
-                loss_ode = self.loss_ode_fct(hidden_states, labels, labels)
-                loss = loss + 0.5 * loss_ode
+                loss_ce_fct = CrossEntropyLoss(weight=self.class_weight)
+                
+                if self.num_cefr_levels == 8:
+                    # 0-7
+                    labels_cls = (labels * 2 - 4).long()
+                elif self.num_cefr_levels == 4:
+                    # 0-3
+                    labels_cls = (labels).long() - 2
+
+                loss_pt = loss_ce_fct(proto_logits.view(-1, self.num_cefr_levels), labels_cls.view(-1))
+                loss = loss + 0.5 * loss_pt
+            elif self.config.problem_type == "pairwise_ranking_regression":
+                # MSE + pairwise ranking loss
+                logits = logits.squeeze(-1)
+                mse_loss = F.mse_loss(logits, labels)
+                ranking_loss = self.pairwise_ranking_loss(logits, labels)
+                loss = mse_loss + 0.3 * ranking_loss  # lambda = 0.3
+            elif self.config.problem_type == "scaled_regression":
+                loss_fct = MSELoss()
+                logits = logits.squeeze(-1)         # (B,)
+                labels = labels.view(-1)            # (B,)
+
+                # 1. 標準化 labels（無需保留計算圖）
+                with torch.no_grad():
+                    labels_np = labels.detach().cpu().numpy().reshape(-1, 1)
+                    labels_scaled_np = self.scaler.transform(labels_np).flatten()
+                    labels_scaled = torch.tensor(labels_scaled_np, dtype=torch.float32, device=labels.device)
+
+                # 2. logits 使用 scale 的 mean/std 做 inline 標準化，不打斷計算圖
+                mean = torch.tensor(self.scaler.mean_, dtype=torch.float32, device=logits.device)
+                std = torch.tensor(self.scaler.scale_, dtype=torch.float32, device=logits.device)
+                logits_scaled = (logits - mean) / std
+
+                # 3. 計算 loss，保留計算圖
+                loss = loss_fct(logits_scaled, labels_scaled)
+            elif self.config.problem_type == "weighted_focal_regression":
+                activate='sigmoid'
+                beta=.2 
+                gamma=1
+                logits = logits.squeeze(-1)
+                loss = (logits - labels) ** 2
+                loss *= (torch.tanh(beta * torch.abs(logits - labels))) ** gamma if activate == 'tanh' else \
+                    (2 * torch.sigmoid(beta * torch.abs(logits - labels)) - 1) ** gamma
+                loss = torch.mean(loss)
+            elif self.config.problem_type == "test_time_adaptation":
+                logits = logits.squeeze(-1)
+                hidden_states_mean = torch.mean(hidden_states, dim=0)
+                hidden_states_var = torch.var(hidden_states, dim=0)
+                
+                self.tr_vector_mean = self.tr_vector_mean.to(logits.device)
+                self.tr_vector_var = self.tr_vector_var.to(logits.device)
+                
+                mean_loss = torch.mean(torch.pow(self.tr_vector_mean - hidden_states_mean, 2))
+                var_loss = torch.mean(torch.pow(self.tr_vector_var - hidden_states_var, 2))
+                loss = mean_loss + var_loss
+            elif self.config.problem_type == "cumulative_link_loss":
+                # labels 1-8 to 0-7
+                labels = labels - 1
+                loss = self.loss_cll_fct(logits.view(-1, self.num_labels), labels.view(-1))
 
         if not return_dict:
             output = (logits,) + outputs[2:]
@@ -602,3 +724,4 @@ class AutoGraderPrototypeRegModel(Wav2Vec2PreTrainedModel):
             attentions=outputs.attentions,
             embeds=hidden_states
         )
+

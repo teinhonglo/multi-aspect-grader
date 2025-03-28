@@ -19,6 +19,7 @@
     "model_path" : "facebook/wav2vec2-base",
     "text_model_path" : "bert-base-uncased",
     "problem_type": "single_label_classification",
+    "loss_type": "ce",
     "task_type": "grader",
     "num_labels": 5,
     "model_type": "baseline",

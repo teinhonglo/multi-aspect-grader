@@ -14,6 +14,9 @@ from modules.net_models import MeanPooling, AttentionPooling, AttentionPooling2
 from modules.encoders import TransformerEncoder
 from modules.decoders import TransformerDecoder
 from losses import OridinalEntropy
+from sklearn.preprocessing import StandardScaler
+import numpy as np
+from losses import OrdinalRegressionLoss, CumulativeLinkLoss, CDW_CELoss
 
 class PredictionHead(nn.Module):
     def __init__(self, config, input_dim=None, output_dim=None):
@@ -64,6 +67,7 @@ class AutoGraderModel(Wav2Vec2PreTrainedModel):
             self.text_config = text_config
 
         super().__init__(self.config)
+        self.model_args = model_args
         
         # model
         if pretrained:
@@ -72,7 +76,6 @@ class AutoGraderModel(Wav2Vec2PreTrainedModel):
         else:
             self.model = AutoModel.from_config(self.config)
 
-        #self.speech_attn_pool = AttentionPooling(in_dim=self.config.hidden_size + self.text_config.hidden_size)
         self.pool_type = model_args["pool_type"]
         
         if self.pool_type == "attn":
@@ -82,10 +85,7 @@ class AutoGraderModel(Wav2Vec2PreTrainedModel):
         elif self.pool_type == "mean":
             self.speech_pool = MeanPooling()
         
-        if "pred_head" in model_args: 
-            self.pred_head = model_args["pred_head"] 
-        else:
-            self.pred_head = "default"
+        self.pred_head = "default" if "pred_head" not in model_args else model_args["pred_head"] 
         
         if self.pred_head == "default":
             # prediction head
@@ -100,12 +100,17 @@ class AutoGraderModel(Wav2Vec2PreTrainedModel):
         self.model.gradient_checkpointing_enable()
         
         # NOTE: freeze feature encoder
-        self.freeze_feature_extractor()
+        if "not_freeze_extractor" not in model_args:
+            self.freeze_feature_extractor()
         if "freeze_k_layers" in model_args:
             self.freeze_k_layers(model_args["freeze_k_layers"])
         
-        if self.config.problem_type == "oridnal_regression":
-            self.loss_ode_fct = OridinalEntropy(lambda_d_phn=1.0, lambda_t_phn=1.0, margin=1.0, ignore_index=-1)
+        if self.config.problem_type == "ordinal_regression":
+            self.loss_odr_fct = OrdinalRegressionLoss(num_class=8, train_cutpoints=False, scale=20.0)
+        elif self.config.problem_type == "cumulative_link_loss":
+            self.loss_cll_fct = CumulativeLinkLoss()
+        
+        self.scaler = None
     
     def freeze_k_layers(self, k):
         if k > len(self.model.encoder.layers):
@@ -120,6 +125,19 @@ class AutoGraderModel(Wav2Vec2PreTrainedModel):
     def load_pretrained_wav2vec2(self, state_dict):
         self.model.load_state_dict(state_dict)
         self.model.feature_extractor._freeze_parameters()
+
+    def init_scaler(self, tr_dataset):
+        # for regression
+        print("[INFO] Initialize scalar (regression) ...")
+        tr_labels = np.array(tr_dataset['labels'])
+        scaler = StandardScaler()
+        self.scaler = scaler.fit(tr_labels.reshape(-1, 1))
+    
+    def init_mean_var(self, tr_vector_mean, tr_vector_var):
+        # for regression
+        print("[INFO] Initialize mean and var ...")
+        self.tr_vector_mean = tr_vector_mean
+        self.tr_vector_var = tr_vector_var
 
     def forward(self,
         input_values,
@@ -173,8 +191,7 @@ class AutoGraderModel(Wav2Vec2PreTrainedModel):
                 loss = loss_fct(logits, labels)
             elif self.config.problem_type == "single_label_classification":
                 loss_fct = CrossEntropyLoss(weight=self.class_weight)
-                # labels 1-8 to 0-7
-                # NOTE: teemi: 1-9 to 0-8
+                # labels 1-8 to 0-7 (teemi)
                 labels = labels - 1
                 loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
             elif self.config.problem_type == "multi_label_classification":
@@ -187,12 +204,44 @@ class AutoGraderModel(Wav2Vec2PreTrainedModel):
                 cefr_labels = torch.floor(labels)
                 loss_cefr = loss_fct(logits, cefr_labels)
                 loss = loss + 0.5 * loss_cefr
-            elif self.config.problem_type == "oridnal_regression":
-                loss_fct = MSELoss()
+            elif self.config.problem_type == "ordinal_regression":
                 logits = logits.squeeze(-1)
-                loss = loss_fct(logits, labels)
-                loss_ode = self.loss_ode_fct(hidden_states, labels, labels)
-                loss = loss + 0.5 * loss_ode
+                labels = ((labels - 2.0) * 2).long()
+                loss_ode = self.loss_odr_fct(logits, labels)
+                loss = loss_ode
+            elif self.config.problem_type == "scaled_regression":
+                loss_fct = MSELoss()
+                logits = logits.squeeze(-1)         # (B,)
+                labels = labels.view(-1)            # (B,)
+                # Apply StandardScaler on both logits and labels
+                logits_np = logits.detach().cpu().numpy().reshape(-1, 1)
+                labels_np = labels.detach().cpu().numpy().reshape(-1, 1)
+
+                logits_scaled = self.scaler.transform(logits_np)
+                labels_scaled = self.scaler.transform(labels_np)
+
+                logits_scaled = torch.tensor(logits_scaled.flatten(), dtype=torch.float32, device=logits.device)
+                labels_scaled = torch.tensor(labels_scaled.flatten(), dtype=torch.float32, device=labels.device)
+                loss = loss_fct(logits_scaled, labels_scaled)
+            elif self.config.problem_type == "test_time_adaptation":
+                logits = logits.squeeze(-1)
+                hidden_states_mean = torch.mean(hidden_states, dim=0)
+                hidden_states_var = torch.var(hidden_states, dim=0)
+                
+                self.tr_vector_mean = self.tr_vector_mean.to(logits.device)
+                self.tr_vector_var = self.tr_vector_var.to(logits.device)
+                
+                mean_loss = torch.mean(torch.pow(self.tr_vector_mean - hidden_states_mean, 2))
+                var_loss = torch.mean(torch.pow(self.tr_vector_var - hidden_states_var, 2))
+                loss = mean_loss + var_loss
+            elif self.config.problem_type == "cumulative_link_loss":
+                # labels 1-8 to 0-7
+                labels = labels - 1
+                loss = self.loss_cll_fct(logits.view(-1, self.num_labels), labels.view(-1, 1))
+            elif self.config.problem_type == "cdw_ce_loss":
+                loss_fct = CDW_CELoss(alpha=2.0)
+                labels = labels - 1
+                loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
 
         if not return_dict:
             output = (logits,) + outputs[2:]
@@ -259,8 +308,10 @@ class AutoTextGraderModel(BertPreTrainedModel):
         self.class_weight = class_weight
         self.model.gradient_checkpointing_enable()
         
-        if self.config.problem_type == "oridnal_regression":
-            self.loss_ode_fct = OridinalEntropy(lambda_d_phn=1.0, lambda_t_phn=1.0, margin=1.0, ignore_index=-1)
+        if self.config.problem_type == "ordinal_regression":
+            self.loss_odr_fct = OrdinalRegressionLoss(num_class=8, train_cutpoints=False, scale=20.0)
+        elif self.config.problem_type == "cumulative_link_loss":
+            self.loss_odr_fct = CumulativeLinkLoss()
         
     def freeze_k_layers(self, k):
         if k > len(self.model.encoder.layers):
@@ -268,6 +319,12 @@ class AutoTextGraderModel(BertPreTrainedModel):
         
         for parameter in self.model.encoder.layers[:k].parameters():
             parameter.requires_grad = False
+    
+    def init_mean_var(self, tr_vector_mean, tr_vector_var):
+        # for regression
+        print("[INFO] Initialize mean and var ...")
+        self.tr_vector_mean = tr_vector_mean
+        self.tr_vector_var = tr_vector_var
 
     def forward(self,
         input_values,
@@ -310,12 +367,26 @@ class AutoTextGraderModel(BertPreTrainedModel):
             elif self.config.problem_type == "multi_label_classification":
                 loss_fct = BCEWithLogitsLoss()
                 loss = loss_fct(logits, labels)
-            elif self.config.problem_type == "oridnal_regression":
-                loss_fct = MSELoss()
+            elif self.config.problem_type == "ordinal_regression":
                 logits = logits.squeeze(-1)
-                loss = loss_fct(logits, labels)
-                loss_ode = self.loss_ode_fct(hidden_states, labels, labels)
-                loss = loss + 0.5 * loss_ode
+                labels = ((labels - 2.0) * 2).long()
+                loss_ode = self.loss_odr_fct(logits, labels)
+                loss = loss_ode
+            elif self.config.problem_type == "test_time_adaptation":
+                logits = logits.squeeze(-1)
+                hidden_states_mean = torch.mean(hidden_states, dim=0)
+                hidden_states_var = torch.var(hidden_states, dim=0)
+                
+                self.tr_vector_mean = self.tr_vector_mean.to(logits.device)
+                self.tr_vector_var = self.tr_vector_var.to(logits.device)
+                
+                mean_loss = torch.mean(torch.pow(self.tr_vector_mean - hidden_states_mean, 2))
+                var_loss = torch.mean(torch.pow(self.tr_vector_var - hidden_states_var, 2))
+                loss = mean_loss + var_loss
+            elif self.config.problem_type == "cumulative_link_loss":
+                # labels 1-8 to 0-7
+                labels = labels - 1
+                loss = self.loss_cll_fct(logits.view(-1, self.num_labels), labels.view(-1))
 
         if not return_dict:
             output = (logits,) + outputs[2:]
@@ -390,8 +461,10 @@ class AutoAudioTextGraderModel(Wav2Vec2PreTrainedModel):
         if "freeze_k_layers" in model_args:
             self.freeze_k_layers(model_args["freeze_k_layers"])
         
-        if self.config.problem_type == "oridnal_regression":
-            self.loss_ode_fct = OridinalEntropy(lambda_d_phn=1.0, lambda_t_phn=1.0, margin=1.0, ignore_index=-1)
+        if self.config.problem_type == "ordinal_regression":
+            self.loss_odr_fct = OrdinalRegressionLoss(num_class=8, train_cutpoints=False, scale=20.0)
+        elif self.config.problem_type == "cumulative_link_loss":
+            self.loss_odr_fct = CumulativeLinkLoss()
     
     def freeze_k_layers(self, k):
         if k > len(self.model.encoder.layers):
@@ -406,6 +479,12 @@ class AutoAudioTextGraderModel(Wav2Vec2PreTrainedModel):
     def load_pretrained_wav2vec2(self, state_dict):
         self.model.load_state_dict(state_dict)
         self.model.feature_extractor._freeze_parameters()
+    
+    def init_mean_var(self, tr_vector_mean, tr_vector_var):
+        # for regression
+        print("[INFO] Initialize mean and var ...")
+        self.tr_vector_mean = tr_vector_mean
+        self.tr_vector_var = tr_vector_var
 
     def forward(self,
         input_values,
@@ -478,12 +557,26 @@ class AutoAudioTextGraderModel(Wav2Vec2PreTrainedModel):
             elif self.config.problem_type == "multi_label_classification":
                 loss_fct = BCEWithLogitsLoss()
                 loss = loss_fct(logits, labels)
-            elif self.config.problem_type == "oridnal_regression":
-                loss_fct = MSELoss()
+            elif self.config.problem_type == "ordinal_regression":
                 logits = logits.squeeze(-1)
-                loss = loss_fct(logits, labels)
-                loss_ode = self.loss_ode_fct(hidden_states, labels, labels)
-                loss = loss + 0.5 * loss_ode
+                labels = ((labels - 2.0) * 2).long()
+                loss_ode = self.loss_odr_fct(logits, labels)
+                loss = loss_ode
+            elif self.config.problem_type == "test_time_adaptation":
+                logits = logits.squeeze(-1)
+                hidden_states_mean = torch.mean(hidden_states, dim=0)
+                hidden_states_var = torch.var(hidden_states, dim=0)
+                
+                self.tr_vector_mean = self.tr_vector_mean.to(logits.device)
+                self.tr_vector_var = self.tr_vector_var.to(logits.device)
+                
+                mean_loss = torch.mean(torch.pow(self.tr_vector_mean - hidden_states_mean, 2))
+                var_loss = torch.mean(torch.pow(self.tr_vector_var - hidden_states_var, 2))
+                loss = mean_loss + var_loss
+            elif self.config.problem_type == "cumulative_link_loss":
+                # labels 1-8 to 0-7
+                labels = labels - 1
+                loss = self.loss_cll_fct(logits.view(-1, self.num_labels), labels.view(-1))
 
         if not return_dict:
             output = (logits,) + outputs[2:]
@@ -496,3 +589,4 @@ class AutoAudioTextGraderModel(Wav2Vec2PreTrainedModel):
             attentions=outputs.attentions,
             embeds=hidden_states
         )
+

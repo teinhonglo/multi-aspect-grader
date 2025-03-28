@@ -19,6 +19,7 @@
     "model_path" : "facebook/wav2vec2-base",
     "text_model_path" : "bert-base-uncased",
     "problem_type": "regression",
+    "loss_type": "mse",
     "task_type": "grader",
     "pred_head": "norm_head",
     "num_labels": 1,

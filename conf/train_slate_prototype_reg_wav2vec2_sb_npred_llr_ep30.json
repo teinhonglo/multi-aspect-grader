@@ -1,28 +1,33 @@
 [ 
-  {
+{
     "per_device_train_batch_size": 4,
     "gradient_accumulation_steps": 8,
     "per_device_eval_batch_size": 8,
     "evaluation_strategy": "steps",
-    "num_train_epochs": 20,
+    "num_train_epochs": 30,
     "save_steps": 50,
     "eval_steps": 50,
     "logging_steps": 50,
-    "learning_rate": 1e-5,
+    "learning_rate": 1e-4,
     "weight_decay": 0,
-    "warmup_steps": 0,
-    "save_total_limit": 1,
+    "warmup_steps": 600,
+    "save_total_limit": 3,
     "metric_for_best_model": "rmse",
-    "greater_is_better": false
+    "greater_is_better": false,
+    "report_to": "none"
   },
   {
     "model_path" : "facebook/wav2vec2-base",
     "text_model_path" : "bert-base-uncased",
     "problem_type": "regression",
-    "loss_type": "mse",
     "task_type": "grader",
+    "pred_head": "norm_head",
     "num_labels": 1,
-    "model_type": "baseline",
+    "num_prototypes": 1,
+    "num_cefr_levels": 8,
+    "init_prototypes": true,
+    "model_type": "prototype_reg",
+    "dist": "scos",
     "pool_type": "attn",
     "class_weight_alpha": 0.0,
     "final_dropout": 0.0
