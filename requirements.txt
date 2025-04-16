@@ -3,3 +3,4 @@ scipy==1.10.0
 librosa==0.10.2
 seaborn==0.12.2
 transformers==4.28.1
+pysndfx==0.3.6
