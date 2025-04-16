@@ -3,8 +3,8 @@
 ### Dependencies
 ``` yaml
 # conda environment  
-conda create -n wav2vec2-grader python==3.8.15
-conda activate wav2vec2-grader  
+conda create -n multi-aspect-grader python==3.8.15
+conda activate multi-aspect-grader 
 
 # install requirements
 pip install -r requirements.txt  
